@@ -1,0 +1,25 @@
+# Decisions
+
+Lightweight log of cross-cutting decisions referenced by the epics/stories.
+Statuses: **accepted** / **proposed** / **open**. Link decisions from stories as
+`D-NN`.
+
+| ID | Decision | Status |
+| --- | --- | --- |
+| D-01 | v1 scope is the **Cubase 3 red dongle only** (Intel 5C060 / EP600). It is the best-sourced target: full JEDEC fuse map + de-fused equations + two m68k golden models (CUBASE.S, CUBSCORE.S). The Cubase 2 "black dongle" (routine A) and the Cubase Audio Falcon dual dongle (a different Xilinx XC9536XL chip) are out of scope; the architecture stays extensible to them. Diego, 2026-08-19. | accepted |
+| D-02 | **Commit derived artifacts + provenance hashes only.** This repo publishes to a public microfirmware store, so the raw reverse-engineered files (JEDEC fuse map `SRD_OK`, de-fused equations `srd_ok.jed.txt`, Medway Boys crack `CUBASE.S`) are NOT committed. Committed: the generated `rp/src/include/cubase_lut.h`, the golden vectors, and `tools/reference/PROVENANCE.md` (SHA-256 of each source + the full-transition signature). `tools/generate_lut.py` reads the raw sources via `--source-dir`; `.gitignore` guards their filenames. Diego, 2026-08-19. | accepted |
+| D-03 | **Modal design: setup mode vs dongle mode.** The MultiDevice normally uses ROM3 as its command channel (`commemul`+`chandler`); the dongle also needs ROM3. They cannot coexist (C-01), so the app is modal: setup mode = the normal template (ROM4 cartridge + ROM3 command channel + terminal, for config); dongle mode = `cubaseemul` owns ROM3, no `commemul`, network off, deterministic timing. Switch via `ACONFIG_PARAM_MODE` (already read, currently unbranched) + save + reset; SELECT short-press returns to setup. | accepted |
+| D-04 | **Runtime engine: Core1 busy-poll is the v1 baseline; pure PIO+DMA is the target end-state (Iteration 3).** Core1 busy-poll is correctness-first (simple, deterministic, ~250 ns handler) and easy to verify against the golden model. Pure PIO+DMA (state in a PIO register, DMA feeds back next-state) removes the timing race (C-03) entirely but is intricate; it is Diego's preferred end-state and is scheduled as EPIC-08 after the baseline works. Diego, 2026-08-19. | accepted |
+| D-05 | **pin15 power-on ambiguity is behaviorally moot.** The HDL/equations do not reset pin15. Verified (2026-08-19) that from pin15=0 (state 0x0000) and pin15=1 (state 0x0100) the D8 output stream is identical for any A8 input (1 M random steps; converges). The runtime uses the pin15=0 reset (matching CUBASE.S / MiSTer); the LUT is built over the union of both universes (6150 states) so the exact silicon power-on is covered either way. | accepted |
+| D-06 | **Data word driven on a dongle read = `0xFEFF` (D8=0) / `0xFFFF` (D8=1)**, i.e. all non-D8 lines high, mirroring the MiSTer core's `{7'h7f, cubase3_d8}`. The MultiDevice drives all 16 data lines when !WRITE is asserted, whereas the real dongle likely drives only D8; this is safe iff Cubase masks the read to D8 (MiSTer's choice implies it does). To be confirmed functionally against real Cubase (no logic analyzer — C-02). | proposed |
+| D-07 | **The dongle lives on ROM3** ($FB0000), as the real 5C060 does (`.rom3_n`). Contingent on EPIC-04 gate #1 proving the MultiDevice can drive data during a ROM3 read — `commemul` only ever *captures* on ROM3, so driving it is unexercised on this hardware. If gate #1 fails (data direction is gated by ROM4 chip-select in hardware), the dongle must move to ROM4 — a design pivot. | proposed |
+
+## Constraints
+
+| ID | Constraint |
+| --- | --- |
+| C-01 | **PIO instruction budget forces the modal design.** pio0 holds `romemul` (16 instr) + `commemul` (10) = 26 of 32 words, leaving only 6. A correct cubase ROM3 program is ~13 instructions and cannot coexist; so dongle mode loads *neither* `commemul` nor (needed) `romemul`, and owns pio0 alone. pio1 is nominally free but the pico_w CYW43 driver typically claims a pio1 SM. |
+| C-02 | **No logic analyzer available** (Diego has MultiDevice + ST only). Verification leans on exhaustive host-side golden-model cross-checks plus functional "does Cubase accept it and boot" testing. Fine bus-timing (D-06, burst behavior) can only be confirmed functionally, not captured. |
+| C-03 | **The cartridge bus has no DTACK / no flow control.** The RP cannot insert wait states, so it cannot stall a read until data is ready. The per-access response must always beat the ST inter-access gap; a late handler drives stale data → wrong D8. This is what motivates the Iteration 3 pure-PIO+DMA engine. |
+| C-04 | **The LUT must be SRAM-resident.** 24 KB exceeds the 16 KB XIP flash cache, so a flash-resident `const` table would cause nondeterministic fetch stalls in the Core1 handler. The generated array is non-const (lands in `.data`/SRAM) and the handler is `__not_in_flash_func`. |
+| C-05 | **RP2040 has 264 KB SRAM** (MultiDevice reserves ~192 KB general RAM + a 64 KB ROM_IN_RAM region unused in dongle mode). The 24 KB LUT fits trivially. |
