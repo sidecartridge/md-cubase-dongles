@@ -60,3 +60,9 @@ dist/
 .cache/
 .claude/
 .DS_Store
+# Reverse-engineered dongle sources are never committed (provenance kept as hashes)
+srd_ok.jed.txt
+SRD_OK
+CUBASE.S
+CUBSCORE.S
+tools/reference/sources/
