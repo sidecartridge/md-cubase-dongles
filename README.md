@@ -1,4 +1,14 @@
+<div align="center">
+
+<img src="icon.png" alt="Cubase Dongle Emulator" width="180" />
+
 # Cubase Dongle Emulator
+
+[![Build](https://github.com/sidecartridge/md-cubase-dongles/actions/workflows/build.yml/badge.svg)](https://github.com/sidecartridge/md-cubase-dongles/actions/workflows/build.yml)
+[![Release](https://github.com/sidecartridge/md-cubase-dongles/actions/workflows/release.yml/badge.svg)](https://github.com/sidecartridge/md-cubase-dongles/actions/workflows/release.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
+</div>
 
 A [SidecarTridge Multi-device](https://sidecartridge.com) microfirmware that
 emulates the Steinberg **Cubase copy-protection dongle** on real Atari hardware,
