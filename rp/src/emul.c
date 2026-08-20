@@ -40,15 +40,31 @@
 #define DISPLAY_TERM_CHAR_HEIGHT 8  // 8x8 terminal font
 #define STATUS_MSG_MAX 64
 
-// Dongle catalogue — a cycle list, extensible. Only the Cubase 3 red dongle is
-// implemented today; its id must exist in tools/generate_lut.py's output.
+// Dongle catalogue. Each family lists the Cubase releases it covers. Only the
+// families with `available == true` are implemented and shown in the menu; the
+// rest are placeholders so the taxonomy is documented and easy to extend.
 typedef struct {
-  const char *id;     // persisted in ACONFIG_PARAM_DONGLE
-  const char *label;  // shown in the menu
+  const char *id;              // persisted in ACONFIG_PARAM_DONGLE
+  const char *label;           // family name shown in the menu
+  const char *const *covers;   // NULL-terminated list of covered Cubase versions
+  bool available;              // is this dongle emulation implemented yet?
 } DongleVariant;
 
+static const char *const CUBASE_V1_COVERS[] = {"Cubase 1.0", "Cubase 1.50",
+                                               "Cubase 1.51", NULL};
+static const char *const CUBASE_V2_COVERS[] = {"Cubase 2.0", "Cubase 2.01",
+                                               "Cubase 2.2x", NULL};
+static const char *const CUBASE_V3_COVERS[] = {"Cubase 3.0", "Cubase 3.01",
+                                               "Cubase 3.10", "Cubase Score 2.x",
+                                               NULL};
+static const char *const CAF_COVERS[] = {"CAF 2.01", "CAF 2.02", "CAF 2.06",
+                                         "CAF 3.01", NULL};
+
 static const DongleVariant DONGLES[] = {
-    {"RED", "Cubase 3 red dongle (Intel 5C060)"},
+    {"CUBASE_V1", "Cubase V1", CUBASE_V1_COVERS, false},
+    {"CUBASE_V2_BLACK", "Cubase V2 (black)", CUBASE_V2_COVERS, false},
+    {"CUBASE_V3", "Cubase V3", CUBASE_V3_COVERS, true},
+    {"CUBASE_AUDIO_FALCON", "Cubase Audio Falcon", CAF_COVERS, false},
 };
 #define DONGLE_COUNT ((int)(sizeof(DONGLES) / sizeof(DONGLES[0])))
 
@@ -90,22 +106,53 @@ static int selectedDongle = 0;
 static void onSelectShortPress(void) { reset_device(); }
 static void onSelectLongPress(void) { reset_jump_to_booster(); }
 
-static int findDongleIndex(const char *dongleId) {
+static int availableDongleCount(void) {
+  int count = 0;
+  for (int i = 0; i < DONGLE_COUNT; i++) {
+    if (DONGLES[i].available) {
+      count++;
+    }
+  }
+  return count;
+}
+
+static int firstAvailableDongle(void) {
+  for (int i = 0; i < DONGLE_COUNT; i++) {
+    if (DONGLES[i].available) {
+      return i;
+    }
+  }
+  return 0;  // no dongle implemented (should not happen)
+}
+
+// Next implemented dongle after `from`, wrapping. Stays put if only one exists.
+static int nextAvailableDongle(int from) {
+  for (int step = 1; step <= DONGLE_COUNT; step++) {
+    int idx = (from + step) % DONGLE_COUNT;
+    if (DONGLES[idx].available) {
+      return idx;
+    }
+  }
+  return from;
+}
+
+// Resolve a persisted id to an implemented dongle, else the first available one.
+static int findAvailableDongle(const char *dongleId) {
   if (dongleId != NULL) {
     for (int i = 0; i < DONGLE_COUNT; i++) {
-      if (strcmp(dongleId, DONGLES[i].id) == 0) {
+      if (DONGLES[i].available && (strcmp(dongleId, DONGLES[i].id) == 0)) {
         return i;
       }
     }
   }
-  return 0;
+  return firstAvailableDongle();
 }
 
-// Read the persisted dongle id, defaulting to the first entry.
+// Read the persisted dongle id, defaulting to the first available family.
 static void loadSelectedDongle(void) {
   SettingsConfigEntry *entry =
       settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DONGLE);
-  selectedDongle = findDongleIndex((entry != NULL) ? entry->value : NULL);
+  selectedDongle = findAvailableDongle((entry != NULL) ? entry->value : NULL);
 }
 
 static void persistSelectedDongle(void) {
@@ -153,7 +200,7 @@ static void refreshInfoLine(void) {
   }
   infoLineDirty = false;
   if (haltCountdown) {
-    drawSetupInfoLine("Countdown stopped. [E] GEM   [X] Booster   [D] change");
+    drawSetupInfoLine("Countdown stopped. [E] Enter GEM    [X] Back to Booster");
   } else {
     showCounter(countdown);
   }
@@ -164,11 +211,19 @@ static void menu(void) {
   infoLineDirty = true;  // the screen clear below wipes the status bar
   showTitle();
   term_printString("\n");
-  term_printString("Emulated dongle:\n");
-  term_printString("  ");
+  term_printString("Emulated dongle:  ");
   term_printString(DONGLES[selectedDongle].label);
-  term_printString("\n\n");
-  term_printString("[D] Change dongle\n\n");
+  term_printString("\n");
+  for (const char *const *cover = DONGLES[selectedDongle].covers;
+       *cover != NULL; cover++) {
+    term_printString("    - ");
+    term_printString(*cover);
+    term_printString("\n");
+  }
+  term_printString("\n");
+  if (availableDongleCount() > 1) {
+    term_printString("[D] Change dongle\n\n");
+  }
   term_printString("[E] Enter GEM      [X] Back to Booster\n\n");
   term_printString("Select an option: ");
   term_markMenuPromptCursor();
@@ -182,7 +237,7 @@ static void cmdMenu(const char *arg) {
 
 static void cmdCycleDongle(const char *arg) {
   haltCountdown = true;
-  selectedDongle = (selectedDongle + 1) % DONGLE_COUNT;
+  selectedDongle = nextAvailableDongle(selectedDongle);
   persistSelectedDongle();
   menu();
   display_refresh();
