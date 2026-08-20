@@ -7,8 +7,8 @@ iteration set out to do and how it ended.
 | Iteration | Theme | Status |
 | --- | --- | --- |
 | 1 | Verified LUT generation (host-only) — turn three reverse-engineered hardware descriptions into one proven-correct 24 KB state-machine table, with no hardware and no bus risk | complete |
-| 2 | RP2040 dongle engine (Core1 busy-poll) — a working, correct Cubase 3 dongle on real hardware using the simple correctness-first engine | not started |
-| 3 | Pure PIO+DMA engine (target end-state) + hardening — move the per-access path fully into PIO+DMA (zero CPU), removing the timing race entirely | not started |
+| 2 | RP2040 dongle engine (Core1 busy-poll) — a working, correct Cubase 3 dongle on real hardware using the simple correctness-first engine | complete |
+| 3 | Pure PIO+DMA engine (target end-state) + hardening + release — move the per-access path fully into PIO+DMA (zero CPU), removing the timing race entirely, then ship | not started |
 
 ---
 
@@ -49,18 +49,21 @@ The design is modal (setup mode vs dongle mode), forced by the PIO instruction
 budget (C-01). The per-access response lives entirely in PIO plus a dedicated
 Core1 handler; the ~10 Hz foreground loop is far too slow to serve the bus.
 
-**Outcome:** _pending._ Starts with EPIC-04 (gate #1): prove the MultiDevice can
-*drive* data on a ROM3 read at all before building the state machine — this is
-the one critical unknown that needs Diego's MultiDevice + ST (D-07, C-01).
+**Outcome:** Complete. Gate #1 passed (the MultiDevice drives ROM3 — the ST
+reads the driven word back), the Core1 busy-poll engine serves the full 5C060
+state machine, and **real Cubase 3.10 runs on the emulated dongle**. EPIC-06
+added the always-on boot menu (dongle selection + auto-boot countdown, copied
+from md-drives-emulator) and slimmed the app to the cartridge-bus essentials.
+App identity & release moved to Iteration 3 so it ships after the PIO+DMA
+end-state and hardening.
 
-**Epics (planned order)**
+**Epics**
 
 | Epic | Status | Note |
 | --- | --- | --- |
-| EPIC-04 ROM3-drive bring-up | todo | Gate #1 — fixed-word drive smoke test; a fail means the dongle must move to ROM4 |
-| EPIC-05 stateful engine | todo | `cubaseemul.pio` + `.c` Core1 busy-poll + build registration |
-| EPIC-06 mode integration & UX | todo | setup↔dongle mode branch, SELECT exit, no ROM4 autorun |
-| EPIC-07 app identity & release build | todo | `desc/app.json`, version, UUID; full build; real Cubase acceptance |
+| EPIC-04 ROM3-drive bring-up | done | Gate #1 passed — ST reads the driven word from ROM3 |
+| EPIC-05 stateful engine | done | `cubaseemul.pio` + `.c` Core1 busy-poll; real Cubase 3.10 runs |
+| EPIC-06 boot menu, dongle selection & slim-down | done | boot menu + countdown + SELECT; dropped network/microSD/USB/LED |
 
 ---
 
@@ -76,8 +79,9 @@ end-state; the Core1 version stays as reference/fallback.
 
 | Epic | Status | Note |
 | --- | --- | --- |
-| EPIC-08 zero-CPU PIO+DMA state machine | todo | state in a PIO register; DMA feeds back next-state; identical D8 vs the Core1 build |
-| EPIC-09 hardening | todo | burst-timing validation, pin15/full-word confirmation, optional Cubase Score |
+| EPIC-07 zero-CPU PIO+DMA state machine | todo | state in a PIO register; DMA feeds back next-state; identical D8 vs the Core1 build |
+| EPIC-08 hardening | todo | burst-timing validation, pin15/full-word confirmation, optional Cubase Score |
+| EPIC-09 app identity & release build | todo | `desc/app.json`, version, UUID; full build; real Cubase acceptance — done last |
 
 Same working rules throughout: strictly sequential, a hardware-verification
 checkpoint after each epic, one branch per epic, merged only after Diego

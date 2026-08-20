@@ -1,6 +1,6 @@
 ---
 id: STORY-01
-epic: EPIC-08
+epic: EPIC-07
 title: PIO+DMA feedback design and implementation
 status: todo
 ---

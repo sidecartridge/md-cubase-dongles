@@ -1,6 +1,6 @@
 ---
 id: STORY-02
-epic: EPIC-09
+epic: EPIC-08
 title: Cubase Score support (optional)
 status: todo
 ---

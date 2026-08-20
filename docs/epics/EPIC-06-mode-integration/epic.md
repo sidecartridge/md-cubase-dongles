@@ -2,7 +2,7 @@
 id: EPIC-06
 iteration: 2
 title: Boot menu, dongle selection & slim-down
-status: in-progress
+status: done
 ---
 
 ## Goal
@@ -20,7 +20,7 @@ Workflow, keys, fonts, and the countdown are copied from `md-drives-emulator`.
 - In scope: the always-on boot menu, the dongle-version cycle selector persisted
   in `ACONFIG_PARAM_DONGLE`, the auto-boot countdown, the `[E]`/`[X]`/`[D]` key
   bindings, and dropping all network/microSD/USB/LED code and libraries.
-- Out of scope: app identity/store descriptor (EPIC-07); adding a second dongle
+- Out of scope: app identity/store descriptor (EPIC-09); adding a second dongle
   variant (the catalogue is built to extend, but only Red exists today).
 
 ## Stories

@@ -1,6 +1,6 @@
 ---
 id: STORY-01
-epic: EPIC-09
+epic: EPIC-08
 title: Timing & correctness validation
 status: todo
 ---

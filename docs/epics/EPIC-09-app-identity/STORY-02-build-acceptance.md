@@ -1,6 +1,6 @@
 ---
 id: STORY-02
-epic: EPIC-07
+epic: EPIC-09
 title: Full build + Cubase acceptance
 status: todo
 ---
