@@ -40,7 +40,14 @@ mkdir dist
 echo "Building target project"
 cd target/atarist
 ./build.sh "$SCRIPT_DIR/target/atarist" release
+target_status=$?
 cd ../..
+if [ "$target_status" -ne 0 ]; then
+    echo "ERROR: Atari ST (m68k) build failed (status $target_status)."
+    echo "       Aborting before the RP build so a stale target_firmware.h is"
+    echo "       never embedded into the firmware."
+    exit "$target_status"
+fi
 echo "Done building target project"
 
 # Build the rp project in the RP architecture

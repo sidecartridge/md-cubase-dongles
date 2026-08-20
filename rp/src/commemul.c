@@ -59,6 +59,11 @@ int commemul_init(void) {
   pio_sm_clear_fifos(commPio, commSm);
   pio_sm_restart(commPio, commSm);
 
+  // Stage the fixed ROM3 response word for the program's preamble `pull`
+  // (loaded into the Y register, driven on every ROM3 access). The RX-side DMA
+  // below is independent — it drains the captured addresses, not this word.
+  pio_sm_put_blocking(commPio, commSm, CUBASE_ROM3_DRIVE_WORD);
+
   commDmaChannel = dma_claim_unused_channel(true);
   dma_channel_config c = dma_channel_get_default_config(commDmaChannel);
   channel_config_set_read_increment(&c, false);

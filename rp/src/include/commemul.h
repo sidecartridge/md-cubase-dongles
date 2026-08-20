@@ -14,6 +14,11 @@
 
 #include "pico/stdlib.h"
 
+// Fixed word driven on the ROM3 data bus (the Cubase dongle response). D8 = 0
+// (0xFEFF), every other data line high — mirrors MiSTer's {7'h7f, d8}. EPIC-05
+// will replace this fixed value with the state-machine output.
+#define CUBASE_ROM3_DRIVE_WORD 0xFEFFu
+
 typedef void (*CommEmulSampleCallback)(uint16_t sample);
 
 // Returns 0 on success, < 0 on failure (PIO program load failed). The

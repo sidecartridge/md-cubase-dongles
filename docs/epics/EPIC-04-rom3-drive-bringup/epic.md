@@ -2,7 +2,7 @@
 id: EPIC-04
 iteration: 2
 title: ROM3-drive bring-up (gate #1)
-status: todo
+status: done
 ---
 
 ## Goal
