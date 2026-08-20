@@ -1,0 +1,113 @@
+; RP2040 PIO program: Cubase 3 red-dongle ROM3 state machine, zero-CPU (EPIC-07).
+;
+; The Core1 engine (cubaseemul.pio + .c) does the LUT step on Core1. This version
+; removes the CPU from the response path entirely -- the state lives in the PIO
+; scratch register Y and the LUT lookup is done by two chained DMA channels, the
+; romemul "address -> data" trick (romemul.c) plus feedback of next_state into Y.
+;
+; Per ROM3 access:
+;   1. sample A8 (the FSM input)
+;   2. build the LUT byte address  base | (state<<3) | (a8<<2)  in the ISR and
+;      autopush it -- DMA-A moves it to DMA-B's read_addr, DMA-B fetches the
+;      32-bit entry {output_word<<16 | next_state} into the TX FIFO
+;   3. drive output_word on the data bus; load next_state into Y for next time
+;
+; The entry stores output_word(CURRENT state) (the registered 5C060 output), so a
+; single self-contained access reproduces the real dongle's pipeline: D8 during
+; access N reflects state S_N, and A8_N selects S_{N+1}. The reset state's own
+; entry carries 0xFEFF, so no pre-staging is needed.
+;
+; Owns all of pio0 (romemul freed at the commit), so it has the full 32-slot
+; instruction budget. Author: Diego Parrilla Santamaría. Date: August 2026.
+
+; !ROM3 signal
+.define public ROM3_GPIO 26
+
+.define public ACTIVE 0
+.define public INACTIVE 1
+
+; Inverted READ/WRITE side-set pair (READ = LSB, WRITE = MSB)
+.define public READ_WRITE 0b00
+.define public NOT_READ_WRITE 0b01
+.define public READ_NOT_WRITE 0b10
+.define public NOT_READ_NOT_WRITE 0b11
+
+.define public BUS_PINS 16
+.define public STATE_ID_BITS 13
+.define public READ_ADDRESS_SAFE_WAIT_CYCLES 3
+
+.program cubaseemul_dma_read
+    .side_set 2 opt
+
+; --- Preamble (runs once) ---
+; X = LUT base high word (base >> 16), pushed by C before the SM is enabled.
+    pull block                     side NOT_READ_NOT_WRITE
+    mov x, osr
+; Park the shared bus as input / high-Z.
+    mov osr, null
+    out pindirs, BUS_PINS
+; Y = reset state id (0).
+    mov y, null
+
+.wrap_target
+    wait ACTIVE gpio ROM3_GPIO
+
+; Assert !READ, settle, then sample A8 (in-base is the A8 pin, so it is bit 0).
+    nop                            side READ_NOT_WRITE [READ_ADDRESS_SAFE_WAIT_CYCLES]
+    nop                                                [READ_ADDRESS_SAFE_WAIT_CYCLES]
+    nop                                                [READ_ADDRESS_SAFE_WAIT_CYCLES]
+
+; Build the LUT byte address in the ISR:  base | (state<<3) | (a8<<2).
+; mov loads base>>16; the three ins shift a 16-bit offset in underneath it, so
+; base lands back in bits 31..16 and the offset in bits 15..0. Autopush (16)
+; sends the 32-bit address to DMA-A.
+    mov isr, x
+    in y, STATE_ID_BITS
+    in pins, 1
+    in null, 2
+
+; Take the fetched 32-bit entry (bus still input -- a benign stall if DMA is
+; late). Low 16 = next_state -> Y; high 16 = output_word.
+    pull block
+    out y, 16
+    mov isr, osr                   ; stash output_word (ISR is free after autopush)
+
+; Flip the shared bus to output and drive output_word (READ off, WRITE on).
+    mov osr, ~null
+    out pindirs, BUS_PINS
+    mov osr, isr
+    out pins, BUS_PINS             side NOT_READ_WRITE
+
+; Hold until the access ends, then release the bus to input / high-Z.
+    wait INACTIVE gpio ROM3_GPIO
+    mov osr, null                  side NOT_READ_NOT_WRITE
+    out pindirs, BUS_PINS
+.wrap
+
+% c-sdk {
+
+static inline void cubaseemul_dma_read_program_init(PIO pio, uint sm,
+                                                    uint offset,
+                                                    uint bus_pin_base,
+                                                    uint a8_pin, uint rw_pin_base,
+                                                    float div) {
+    pio_sm_config c = cubaseemul_dma_read_program_get_default_config(offset);
+
+    // IN samples A8 alone (in-base = A8 pin), so `in pins, 1` lands A8 at bit 0.
+    // Shift left + autopush at 16: mov isr,x then 13+1+2 in-bits form the address.
+    sm_config_set_in_pins(&c, a8_pin);
+    sm_config_set_in_shift(&c, false, true, 16);
+
+    // OUT drives the 16-bit bus. Shift right, no autopull: the entry is pulled
+    // explicitly and its two fields (next_state, output_word) are shifted out.
+    sm_config_set_out_pins(&c, bus_pin_base, BUS_PINS);
+    sm_config_set_out_shift(&c, true, false, BUS_PINS);
+
+    sm_config_set_sideset_pins(&c, rw_pin_base);
+    pio_sm_set_consecutive_pindirs(pio, sm, rw_pin_base, 2, true);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+%}

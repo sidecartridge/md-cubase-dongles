@@ -12,6 +12,11 @@
 static int readAddrRomDmaChannel = -1;
 static int lookupDataRomDmaChannel = -1;
 
+// Kept so romemul_deinit() can free the SM + program (the Cubase PIO+DMA engine
+// reclaims all of pio0 when it commits — see cubaseemul_dma).
+static int romSm = -1;
+static int romOffset = -1;
+
 // Default PIO to use
 static PIO defaultPio = pio0;
 
@@ -51,6 +56,10 @@ static int initRomEmulator(PIO pio) {
 
   // Claim a free state machine from the PIO read program
   uint smReadROM = pio_claim_unused_sm(pio, true);
+
+  // Remember SM + program offset so romemul_deinit() can release them later.
+  romSm = (int)smReadROM;
+  romOffset = (int)offsetReadROM;
 
   // Start the state machine, executing the PIO read program
   romemul_read_program_init(pio, smReadROM, offsetReadROM, READ_ADDR_GPIO_BASE,
@@ -166,4 +175,26 @@ int init_romemul(bool copyFlashToRAM) {
   }
 
   return smReadROM;
+}
+
+void romemul_deinit(void) {
+  if (romSm < 0) {
+    return;  // never initialized (or already torn down)
+  }
+  // Free the ROM4 read engine so the Cubase PIO+DMA dongle can reclaim all of
+  // pio0 and both DMA channels. The shared bus / READ / WRITE GPIOs stay put --
+  // the successor SM inherits them. After this, ROM4 is open-bus, which is safe
+  // because the m68k has already booted GEM and never reads the cartridge again.
+  pio_sm_set_enabled(defaultPio, (uint)romSm, false);
+  dma_channel_abort(readAddrRomDmaChannel);
+  dma_channel_abort(lookupDataRomDmaChannel);
+  dma_channel_unclaim(readAddrRomDmaChannel);
+  dma_channel_unclaim(lookupDataRomDmaChannel);
+  pio_remove_program(defaultPio, &romemul_read_program, (uint)romOffset);
+  pio_sm_unclaim(defaultPio, (uint)romSm);
+  readAddrRomDmaChannel = -1;
+  lookupDataRomDmaChannel = -1;
+  romSm = -1;
+  romOffset = -1;
+  DPRINTF("ROM4 read engine torn down\n");
 }
