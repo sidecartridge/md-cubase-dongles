@@ -3,7 +3,8 @@
 // We don't have any variables because this is the placeholder app
 static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},     // 255: Menu mode
-    {ACONFIG_PARAM_DONGLE, SETTINGS_TYPE_STRING, "RED"},  // selected dongle id
+    {ACONFIG_PARAM_DONGLE, SETTINGS_TYPE_STRING,
+     "CUBASE_V3"},  // selected dongle family id
 };
 
 // Create a global context for our settings
