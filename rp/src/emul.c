@@ -21,7 +21,7 @@
 #include "aconfig.h"
 #include "chandler.h"
 #include "commemul.h"
-#include "cubaseemul.h"
+#include "cubaseemul_dma.h"
 #include "display.h"
 #include "memfunc.h"
 #include "pico/stdlib.h"
@@ -34,6 +34,9 @@
 #define SLEEP_LOOP_MS 100
 #define COUNTDOWN_START_SECONDS 20
 #define ONE_SECOND_US 1000000
+// After CMD_START, wait for the m68k to read the sentinel + run userfw (both
+// ROM4 reads served by romemul) before the PIO+DMA engine frees romemul.
+#define GEM_BOOT_SETTLE_MS 1500
 #define DISPLAY_TERM_CHAR_HEIGHT 8  // 8x8 terminal font
 #define STATUS_MSG_MAX 64
 
@@ -191,13 +194,15 @@ static void cmdEnterGem(const char *arg) {
   persistSelectedDongle();
   term_printString("Committing to dongle mode and booting GEM...\n");
   display_refresh();
-  // Mode commit: tear down the ROM3 command channel and stand up the dongle
-  // state-machine engine on pio0 + Core1, from reset. Then tell the m68k to
-  // boot GEM (userfw returns into the boot path). One-way — reset the
-  // MultiDevice to get the menu back.
-  cubaseemul_start();
+  // Mode commit (EPIC-07, zero-CPU PIO+DMA). Boot GEM FIRST: tell the m68k to
+  // read CMD_START and run userfw — both are ROM4 reads that romemul must still
+  // serve. After a settle delay, cubaseemul_dma_start() frees commemul AND
+  // romemul to reclaim all of pio0, builds the DMA LUT, and stands up the
+  // PIO + 2-DMA engine (no Core1). One-way — reset the MultiDevice for the menu.
   SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_START);
-  // Stay in the loop: Core1 must keep serving the dongle while Cubase runs.
+  sleep_ms(GEM_BOOT_SETTLE_MS);
+  cubaseemul_dma_start();
+  // Stay in the loop: the PIO+DMA engine serves the dongle while Cubase runs.
 }
 
 static void cmdBooster(const char *arg) {

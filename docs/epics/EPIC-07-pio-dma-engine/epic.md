@@ -2,7 +2,7 @@
 id: EPIC-07
 iteration: 3
 title: Zero-CPU PIO+DMA state machine
-status: todo
+status: done
 ---
 
 ## Goal

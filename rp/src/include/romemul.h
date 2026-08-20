@@ -28,4 +28,9 @@
 // Function Prototypes
 int init_romemul(bool copyFlashToRAM);
 
+// Tear down the ROM4 read engine (SM, both DMA channels, PIO program) so pio0
+// can be fully reclaimed by the Cubase PIO+DMA dongle engine. ROM4 becomes
+// open-bus afterwards. Idempotent.
+void romemul_deinit(void);
+
 #endif  // ROMEMUL_H
