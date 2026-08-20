@@ -19,6 +19,13 @@ cp version.txt target/
 export VERSION=$(cat version.txt)
 echo "Version: $VERSION"
 
+# Pin the atarist-toolkit-docker image tag to a published tag. Some stcmd
+# wrappers otherwise derive it from $VERSION (e.g. "v1.2.1"), which is not a
+# published image, so `stcmd make` fails to pull it. The app version has nothing
+# to do with the toolchain image version — always use the "latest" toolkit.
+export STCMD_IMAGE_TAG="${STCMD_IMAGE_TAG:-latest}"
+echo "stcmd image tag: $STCMD_IMAGE_TAG"
+
 # Set the board type to be used for building
 export BOARD_TYPE=$1
 echo "Board type: $BOARD_TYPE"
