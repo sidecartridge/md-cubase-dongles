@@ -1,35 +1,100 @@
-# SidecarTridge Multi-device Microfirmware App template
+# Cubase Dongle Emulator
 
-This is the template to create a Microfirmware app for the SidecarTridge Multidevice-app for Atari ST computers.
+A [SidecarTridge Multi-device](https://sidecartridge.com) microfirmware that
+emulates the Steinberg **Cubase copy-protection dongle** on real Atari hardware,
+so you can run Cubase without the original — and often failing, 30-year-old —
+hardware key.
 
-# ⚠️ ATTENTION! READ THIS FIRST
+The MultiDevice plugs into the cartridge port and answers ROM3 accesses exactly
+like the original dongle. Select the dongle from the boot menu and it launches
+straight into GEM.
 
-The process for creating a microfirmware app from this template is now documented in the official [SidecarTridge Multi-device documentation](https://docs.sidecartridge.com/sidecartridge-multidevice/programming/). To avoid inconsistencies and outdated information, we've centralized the instructions there. Please refer to the official documentation for the latest guidance.
+> Learn how to install and use it:
+> <https://docs.sidecartridge.com/sidecartridge-multidevice/microfirmwares/cubase-dongles/>
 
-## Shared 64 KB region layout
+## What it emulates
 
-The template now ships with a single source-of-truth layout for the 64 KB shared region (m68k `$FA0000`–`$FAFFFF`, mirrored at RP `0x20030000`):
+The current release emulates the **Cubase 3 "red dongle"** (an Intel 5C060 /
+EP600 registered PLD). It is a 16-bit registered state machine — not a stored
+key — reproduced exactly from three independent, cross-checked hardware
+descriptions.
 
-- The cartridge image (m68k header + code) lives in the first **8 KB** (`$FA0000`–`$FA1FFF`). `target/atarist/build.sh` enforces this with a hard size check on `BOOT.BIN`.
-- A small fixed-offset metadata block (`CMD_MAGIC_SENTINEL`, `RANDOM_TOKEN`, `RANDOM_TOKEN_SEED`, 60 × 4-byte indexed shared variables) sits at `$FA2000`.
-- The **APP_FREE** arena (~48 KB at `$FA2300`) is the contiguous space your app should use for its own buffers.
-- The **framebuffer** (8000 B for 320×200 monochrome) sits at the very top of the region (`$FAE0C0`), so an overrun walks off the end of the 64 KB window instead of corrupting the metadata block.
+| Dongle family | Cubase versions | Status |
+| --- | --- | --- |
+| **Cubase V3** (red, Intel 5C060) | Cubase 3.0, 3.01, 3.10, **Cubase Score 2.x** | ✅ shipping |
+| Cubase V1 | Cubase 1.0 / 1.50 / 1.51 | planned |
+| Cubase V2 (black) | Cubase 2.0 / 2.01 / 2.2x | planned |
+| Cubase Audio Falcon | CAF 2.01 / 2.02 / 2.06 / 3.01 | planned |
 
-Both sides derive every offset symbolically from the constants in `rp/src/include/chandler.h` (RP-side) and `target/atarist/src/main.s` (m68k side). Apps must never hard-code an address inside the region — always reference the named offset/symbol so the layout stays the single source of truth.
+Verified on hardware: Cubase 3.10 and Cubase Score 2.0 both accept the emulated
+dongle and run.
 
-See `programming.md` for the full table and the budget rules.
+**Devices:** Atari ST, STE, MegaST, MegaSTE, TT, Falcon.
 
-## User firmware module
+## Using it
 
-The cartridge image is split via `target/atarist/src/userfw.ld` into two sections:
+On power-on the boot menu appears:
 
-- `main.s` at offset `0x0000` (`$FA0000`, 2 KB) — boot, dispatch, terminal.
-- `userfw.s` at offset `0x0800` (`$FA0800`, 6 KB) — your app-specific m68k code.
+```
+Cubase Dongle Emulator - v1.0.0beta
 
-`main.s` exposes the user firmware as `USERFW equ (ROM4_ADDR + $800)`. When the RP-side terminal command `f` (`[F]irmware`) is selected, the RP writes `CMD_START = 4` to the cartridge sentinel; the m68k's vsync-polled `check_commands` dispatches to `rom_function`, which `jmp`s to `USERFW`. The default `userfw.s` ships with a Cconws demo that prints `Example firmware load...` to the screen — replace the body with your own logic.
+Emulated dongle:  Cubase V3
+    - Cubase 3.0
+    - Cubase 3.01
+    - Cubase 3.10
+    - Cubase Score 2.x
 
-Adding more modules follows the same `gemdrive.ld`-style pattern used by `md-drives-emulator`: place each new `.text` section in `userfw.ld`, mirror the offset with an `equ` in `main.s`, and add the `.o` target to `target/atarist/Makefile`.
+[E] Enter GEM      [X] Back to Booster
+
+Select an option:
+        Booting GEM in 20 seconds...
+```
+
+- **`[E]`** — commit to the selected dongle and boot GEM. Launch Cubase and it
+  finds the dongle.
+- **`[X]`** — return to the Booster app.
+- **`[D]`** — change the dongle family (appears once more than one family is
+  available).
+- A countdown auto-boots GEM with the selected dongle; **any key** stops it.
+- The physical **SELECT** button returns to this menu (short press) or the
+  Booster (long press), and works while Cubase is running.
+
+## How it works
+
+- The dongle's response path is **zero-CPU**: a PIO program keeps the state
+  machine's state in a scratch register, and two chained DMA channels do the
+  lookup and next-state feedback. No CPU is on the per-access path, which removes
+  the cartridge-bus timing race under Cubase's fast read bursts.
+- The state machine compresses to a ~24 KB lookup table (`rp/src/include/cubase_lut.h`),
+  generated by `tools/generate_lut.py` and regression-tested by `tools/test_lut.py`.
+- The firmware is deliberately slim — no Wi-Fi, microSD, USB or status LED.
+
+## Building
+
+Build with the repo-root `build.sh` (see `CLAUDE.md` for the full toolchain
+requirements):
+
+```bash
+# ./build.sh <board_type> <build_type> <app_uuid>
+./build.sh pico_w release <app-uuid>
+```
+
+The build produces `dist/<uuid>-<version>.uf2` (the firmware you flash) and
+`dist/<uuid>.json` (the app descriptor from `desc/app.json`).
+
+## Provenance & legal
+
+The dongle is reproduced from reverse-engineered hardware descriptions. Those
+**raw sources are not committed** to this public repository; only the derived,
+verified lookup table (`cubase_lut.h`), the golden test vectors, and a SHA-256
+provenance manifest (`tools/reference/PROVENANCE.md`) are. This is an
+interoperability / preservation tool — use it only with software you own.
+
+## Project docs
+
+- `programming.md` — the shared 64 KB region layout and budget rules.
+- `CLAUDE.md` / `AGENTS.md` — build, architecture, and contributor playbook.
 
 ## License
 
-The source code of the project is licensed under the GNU General Public License v3.0. The full license is accessible in the [LICENSE](LICENSE) file. 
+Licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
