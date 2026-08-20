@@ -1,16 +1,19 @@
 {
   "uuid": "<APP_UUID>",
-  "name": "APP DEV Template",
-  "description": "Microfirmware Application Template for Atari ST",
+  "name": "Cubase Dongle Emulator",
+  "description": "Emulates the Steinberg Cubase dongles on the SidecarTridge MultiDevice, so you can run Cubase on a real Atari ST without the original hardware key. Pick the dongle from the boot menu and it launches straight into GEM. <a target='_blank' rel='noopener noreferrer' href='https://docs.sidecartridge.com/sidecartridge-multidevice/microfirmwares/cubase-dongles/'>Learn how</a>",
   "image": "https://placehold.co/256x256/png",
   "tags": [
-    "Sample"
+    "Cubase",
+    "Dongle"
   ],
   "devices": [
     "ST",
     "STE",
     "MegaST",
-    "MegaSTE"
+    "MegaSTE",
+    "TT",
+    "Falcon"
   ],
   "binary": "https://atarist.sidecartridge.com/<APP_UUID>-<APP_VERSION>.uf2",
   "md5": "<BINARY_MD5_HASH>",
