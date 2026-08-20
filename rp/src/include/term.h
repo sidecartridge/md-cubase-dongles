@@ -77,6 +77,15 @@ typedef struct {
   void (*handler)(const char *arg);
 } Command;
 
+// Terminal input mode (copied from md-drives-emulator). SINGLE_KEY dispatches a
+// command on a single keypress (no Enter); the others accumulate a line.
+typedef enum {
+  TERM_COMMAND_LEVEL_SINGLE_KEY = 0,                  // single key command
+  TERM_COMMAND_LEVEL_COMMAND_INPUT = 1,               // command input
+  TERM_COMMAND_LEVEL_DATA_INPUT = 2,                  // data input
+  TERM_COMMAND_LEVEL_COMMAND_SINGLE_KEY_REENTRY = 3,  // single key reentry
+} term_CommandLevel;
+
 /**
  * @brief chandler callback that publishes a parsed protocol command
  *        into the terminal double-buffer for term_loop() to drain.
@@ -145,9 +154,11 @@ void term_cmdGet(const char *arg);
 void term_cmdPutInt(const char *arg);
 void term_cmdPutBool(const char *arg);
 void term_cmdPutString(const char *arg);
-void term_printNetworkInfo(void);
 void term_markMenuPromptCursor(void);
-void term_refreshMenuLiveInfo(void);
+
+// Returns true (and clears the flag) if any key has been pressed since the last
+// call. Used to stop the boot countdown on the first keystroke.
+bool term_consumeKeyPressed(void);
 
 void __not_in_flash_func(term_loop)();
 

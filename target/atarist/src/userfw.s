@@ -46,7 +46,7 @@ putc:
 
 banner:
 	dc.b	27,"E"			; VT52 clear screen + home
-	dc.b	"Cubase dongle active. Booting GEM -- launch Cubase.",13,10,0
+	dc.b	"Loading cubase dongle emulator...",13,10,0
 	; firmware.py needs an even trimmed image length: a non-zero end marker at
 	; an odd byte keeps it even regardless of the string above.
 	even

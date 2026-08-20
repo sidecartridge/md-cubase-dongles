@@ -22,10 +22,8 @@
 #include "display_term.h"
 #include "gconfig.h"
 #include "memfunc.h"
-#include "network.h"
 #include "reset.h"
 #include "romemul.h"
-#include "sdcard.h"
 #include "select.h"
 #include "tprotocol.h"
 
@@ -41,78 +39,6 @@ static uint32_t protocolOverwriteCount = 0;
 #define TERM_NETWORK_INFO_VALUE_SIZE 64
 #define TERM_MENU_LIVE_LINE_MAX 128
 
-static void term_getConfigValueOrNA(const char *key, char *buffer,
-                                    size_t bufferSize) {
-  if (bufferSize == 0) {
-    return;
-  }
-
-  buffer[0] = '\0';
-  SettingsConfigEntry *entry = settings_find_entry(gconfig_getContext(), key);
-  if ((entry != NULL) && (entry->value != NULL) && (entry->value[0] != '\0')) {
-    snprintf(buffer, bufferSize, "%s", entry->value);
-    return;
-  }
-
-  snprintf(buffer, bufferSize, "N/A");
-}
-
-#if defined(CYW43_WL_GPIO_LED_PIN)
-static void term_getIpStringOrNA(const ip_addr_t *address, char *buffer,
-                                 size_t bufferSize) {
-  if (bufferSize == 0) {
-    return;
-  }
-
-  if ((address == NULL) || ip_addr_isany(address)) {
-    snprintf(buffer, bufferSize, "N/A");
-    return;
-  }
-
-  const char *ipString = ipaddr_ntoa(address);
-  if ((ipString != NULL) && (ipString[0] != '\0')) {
-    snprintf(buffer, bufferSize, "%s", ipString);
-  } else {
-    snprintf(buffer, bufferSize, "N/A");
-  }
-}
-
-static void term_getConfiguredDns(char *dns1, size_t dns1Size, char *dns2,
-                                  size_t dns2Size) {
-  if (dns1Size > 0) {
-    snprintf(dns1, dns1Size, "N/A");
-  }
-  if (dns2Size > 0) {
-    snprintf(dns2, dns2Size, "N/A");
-  }
-
-  SettingsConfigEntry *entry =
-      settings_find_entry(gconfig_getContext(), PARAM_WIFI_DNS);
-  if ((entry == NULL) || (entry->value == NULL) || (entry->value[0] == '\0')) {
-    return;
-  }
-
-  char dnsValue[(TERM_NETWORK_INFO_VALUE_SIZE * 2) + 2] = {0};
-  snprintf(dnsValue, sizeof(dnsValue), "%s", entry->value);
-
-  char *dnsSecond = strchr(dnsValue, ',');
-  if (dnsSecond != NULL) {
-    *dnsSecond = '\0';
-    dnsSecond++;
-    while (*dnsSecond == ' ') {
-      dnsSecond++;
-    }
-  }
-
-  if ((dns1Size > 0) && (dnsValue[0] != '\0')) {
-    snprintf(dns1, dns1Size, "%s", dnsValue);
-  }
-
-  if ((dns2Size > 0) && (dnsSecond != NULL) && (dnsSecond[0] != '\0')) {
-    snprintf(dns2, dns2Size, "%s", dnsSecond);
-  }
-}
-#endif
 
 // Command handlers
 static void cmdClear(const char *arg);
@@ -193,6 +119,22 @@ static uint8_t prevCursorY = 0;
 // Buffer to keep track of chars entered between newlines
 static char inputBuffer[TERM_INPUT_BUFFER_SIZE];
 static size_t inputLength = 0;
+
+// Terminal input mode + single-key state (copied from md-drives-emulator).
+// Defaults to single-key: a keypress dispatches its command immediately.
+static uint8_t commandLevel = TERM_COMMAND_LEVEL_SINGLE_KEY;
+static char lastSingleKeyCommand = 0;
+static uint8_t lastInputScanCode = 0;
+
+// Raised on any keystroke (mapped or not) so the app can stop its boot
+// countdown on the first key press. term_consumeKeyPressed() reads and clears.
+static bool keyPressedSinceLastCheck = false;
+
+bool term_consumeKeyPressed(void) {
+  bool pressed = keyPressedSinceLastCheck;
+  keyPressedSinceLastCheck = false;
+  return pressed;
+}
 
 // Getter method for inputBuffer
 char *term_getInputBuffer(void) { return inputBuffer; }
@@ -420,7 +362,10 @@ void term_printString(const char *str) {
 
 // Called whenever a character is entered by the user
 // This is the single point of entry for user input
-static void termInputChar(char chr) {
+static void termInputChar(char chr, bool shiftKey) {
+  // Any key (mapped or not) stops the boot countdown.
+  keyPressedSinceLastCheck = true;
+
   // Check for backspace
   if (chr == '\b') {
     display_termChar(prevCursorX, prevCursorY, ' ');
@@ -453,42 +398,100 @@ static void termInputChar(char chr) {
     return;
   }
 
-  // If it's newline or carriage return, finalize the line
-  if (chr == '\n' || chr == '\r') {
-    // Render newline on screen
-    termRenderChar('\n');
-
-    // Process input_buffer
-    // Split the input into command and argument
-    char command[TERM_INPUT_BUFFER_SIZE] = {0};
-    char arg[TERM_INPUT_BUFFER_SIZE] = {0};
-    sscanf(inputBuffer, "%63s %63[^\n]", command,
-           arg);  // Split at the first space
-
-    bool commandFound = false;
-    for (size_t i = 0; i < numCommands; i++) {
-      if (strcmp(command, commands[i].command) == 0) {
-        commands[i].handler(arg);  // Pass the argument to the handler
-        commandFound = true;
+  switch (commandLevel) {
+    case TERM_COMMAND_LEVEL_SINGLE_KEY: {
+      DPRINTF("Single key command: %c\n", chr);
+      // No shift key: lowercase the character. Shift key: uppercase it.
+      if (shiftKey) {
+        chr = toupper(chr);
+      } else {
+        chr = tolower(chr);
       }
-    }
-    if ((!commandFound) && (strlen(command) > 0)) {
-      // The custom unknown command manager is called when the command is empty
-      // in the command table. This is useful to manage custom entries.
       for (size_t i = 0; i < numCommands; i++) {
-        if (strlen(commands[i].command) == 0) {
-          commands[i].handler(inputBuffer);  // Pass the argument to the handler
+        if (chr == commands[i].command[0]) {
+          lastSingleKeyCommand = chr;
+          commands[i].handler(NULL);  // Pass the argument to the handler
+          break;
         }
       }
+      // Reset input buffer
+      memset(inputBuffer, 0, TERM_INPUT_BUFFER_SIZE);
+      inputLength = 0;
+      display_termRefresh();
+      return;
     }
+    case TERM_COMMAND_LEVEL_COMMAND_SINGLE_KEY_REENTRY: {
+      DPRINTF("Single key command reentry: %c\n", lastSingleKeyCommand);
+      for (size_t i = 0; i < numCommands; i++) {
+        if (lastSingleKeyCommand == commands[i].command[0]) {
+          char paramString[4] = {chr, shiftKey ? 'S' : 'N',
+                                 (char)lastInputScanCode, '\0'};
+          commands[i].handler(paramString);  // Pass the argument as string
+          break;
+        }
+      }
+      memset(inputBuffer, 0, TERM_INPUT_BUFFER_SIZE);
+      inputLength = 0;
+      display_termRefresh();
+      return;
+    }
+    case TERM_COMMAND_LEVEL_COMMAND_INPUT: {
+      if (chr == '\n' || chr == '\r') {
+        // Render newline on screen
+        termRenderChar('\n');
 
-    // Reset input buffer
-    memset(inputBuffer, 0, TERM_INPUT_BUFFER_SIZE);
-    inputLength = 0;
+        // Split the input into command and argument
+        char command[TERM_INPUT_BUFFER_SIZE] = {0};
+        char arg[TERM_INPUT_BUFFER_SIZE] = {0};
+        sscanf(inputBuffer, "%63s %63[^\n]", command,
+               arg);  // Split at the first space
+        bool commandFound = false;
+        for (size_t i = 0; i < numCommands; i++) {
+          if (strcmp(command, commands[i].command) == 0) {
+            commands[i].handler(arg);  // Pass the argument to the handler
+            commandFound = true;
+          }
+        }
+        if ((!commandFound) && (strlen(command) > 0)) {
+          // The custom unknown command manager is called when the command is
+          // empty in the command table. This is useful to manage custom
+          // entries.
+          for (size_t i = 0; i < numCommands; i++) {
+            if (strlen(commands[i].command) == 0) {
+              commands[i].handler(
+                  inputBuffer);  // Pass the argument to the handler
+            }
+          }
+        }
 
-    term_printString("> ");
-    display_termRefresh();
-    return;
+        // Reset input buffer
+        memset(inputBuffer, 0, TERM_INPUT_BUFFER_SIZE);
+        inputLength = 0;
+
+        term_printString("> ");
+        display_termRefresh();
+        return;
+      }
+      break;
+    }
+    case TERM_COMMAND_LEVEL_DATA_INPUT: {
+      if (chr == '\n' || chr == '\r') {
+        // Render newline on screen
+        termRenderChar('\n');
+        for (size_t i = 0; i < numCommands; i++) {
+          if (lastSingleKeyCommand == commands[i].command[0]) {
+            commands[i].handler(
+                inputBuffer);  // Pass the argument to the handler
+            break;
+          }
+        }
+        return;
+      }
+      break;
+    }
+    default:
+      DPRINTF("Unknown command level: %d\n", commandLevel);
+      break;
   }
 
   // If it's a normal character
@@ -505,6 +508,7 @@ static void termInputChar(char chr) {
     // Buffer full, ignore or beep?
   }
 }
+
 
 void term_init(void) {
   // Random-token publish, seed init, and shared-variable bookkeeping moved
@@ -608,8 +612,9 @@ void __not_in_flash_func(term_loop)() {
       case APP_TERMINAL_START: {
         display_termStart(DISPLAY_TILES_WIDTH, DISPLAY_TILES_HEIGHT);
         term_clearScreen();
-        term_printString("Type 'help' for available commands.\n");
-        termInputChar('\n');
+        commandLevel = TERM_COMMAND_LEVEL_SINGLE_KEY;
+        term_clearInputBuffer();
+        termInputChar('m', false);  // re-render the menu (ESC on the ST)
         SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_TERM);
         DPRINTF("Send command to display: DISPLAY_COMMAND_TERM\n");
       } break;
@@ -637,7 +642,8 @@ void __not_in_flash_func(term_loop)() {
           DPRINTF("Keystroke: %d. Shift key: %d, Scan code: %d\n", keystroke,
                   shiftKey, scanCode);
         }
-        termInputChar(keystroke);
+        lastInputScanCode = scanCode;
+        termInputChar(keystroke, shiftKey > 0);
         break;
       }
       default:
@@ -651,340 +657,10 @@ void __not_in_flash_func(term_loop)() {
 }
 
 // Command handlers
-void term_printNetworkInfo(void) {
-  char hostName[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char ipAddress[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char gateway[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char dns1[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char dns2[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char netmask[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char ssid[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char bssid[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char authMode[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char signalDb[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char wifiMode[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char wifiLink[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char ipMode[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char wifiMac[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char mcuArch[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char mcuId[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char selectState[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char sdStatus[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char sdSpace[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-
-  term_getConfigValueOrNA(PARAM_HOSTNAME, hostName, sizeof(hostName));
-  term_getConfigValueOrNA(PARAM_WIFI_IP, ipAddress, sizeof(ipAddress));
-  term_getConfigValueOrNA(PARAM_WIFI_GATEWAY, gateway, sizeof(gateway));
-  term_getConfigValueOrNA(PARAM_WIFI_NETMASK, netmask, sizeof(netmask));
-#if defined(CYW43_WL_GPIO_LED_PIN)
-  term_getConfiguredDns(dns1, sizeof(dns1), dns2, sizeof(dns2));
-#else
-  snprintf(dns1, sizeof(dns1), "N/A");
-  snprintf(dns2, sizeof(dns2), "N/A");
-#endif
-  snprintf(ssid, sizeof(ssid), "N/A");
-  snprintf(bssid, sizeof(bssid), "N/A");
-  snprintf(authMode, sizeof(authMode), "N/A");
-  snprintf(signalDb, sizeof(signalDb), "N/A");
-  snprintf(wifiMode, sizeof(wifiMode), "N/A");
-  snprintf(wifiLink, sizeof(wifiLink), "N/A");
-  snprintf(ipMode, sizeof(ipMode), "N/A");
-  snprintf(wifiMac, sizeof(wifiMac), "N/A");
-  snprintf(mcuArch, sizeof(mcuArch), "N/A");
-  snprintf(mcuId, sizeof(mcuId), "N/A");
-  snprintf(selectState, sizeof(selectState), "%s",
-           select_detectPush() ? "Pressed" : "Released");
-  snprintf(sdStatus, sizeof(sdStatus), "Not mounted");
-  snprintf(sdSpace, sizeof(sdSpace), "N/A");
-
-  uint32_t sdTotalMb = 0;
-  uint32_t sdFreeMb = 0;
-  if (sdcard_getMountedInfo(&sdTotalMb, &sdFreeMb)) {
-    snprintf(sdStatus, sizeof(sdStatus), "Mounted");
-    snprintf(sdSpace, sizeof(sdSpace), "%lu/%lu MB free",
-             (unsigned long)sdFreeMb, (unsigned long)sdTotalMb);
-  } else if (sdcard_isMounted()) {
-    snprintf(sdStatus, sizeof(sdStatus), "Error");
-  }
-
-  term_printString("Network status: ");
-
-#if defined(CYW43_WL_GPIO_LED_PIN)
-  const char *wifiModeValue = network_getWifiModeStr();
-  if ((wifiModeValue != NULL) && (wifiModeValue[0] != '\0')) {
-    snprintf(wifiMode, sizeof(wifiMode), "%s", wifiModeValue);
-  }
-  const char *wifiLinkValue = network_wifiConnStatusStr();
-  if ((wifiLinkValue != NULL) && (wifiLinkValue[0] != '\0')) {
-    snprintf(wifiLink, sizeof(wifiLink), "%s", wifiLinkValue);
-  }
-
-  SettingsConfigEntry *dhcpEntry =
-      settings_find_entry(gconfig_getContext(), PARAM_WIFI_DHCP);
-  if ((dhcpEntry != NULL) && (dhcpEntry->value != NULL) &&
-      (dhcpEntry->value[0] != '\0')) {
-    char dhcpChar = dhcpEntry->value[0];
-    bool dhcpEnabled = (dhcpChar == 't') || (dhcpChar == 'T') ||
-                       (dhcpChar == '1') || (dhcpChar == 'y') ||
-                       (dhcpChar == 'Y');
-    snprintf(ipMode, sizeof(ipMode), "%s", dhcpEnabled ? "DHCP" : "Static");
-  }
-
-  const char *wifiMacValue = network_getCyw43MacStr();
-  if ((wifiMacValue != NULL) && (wifiMacValue[0] != '\0')) {
-    snprintf(wifiMac, sizeof(wifiMac), "%s", wifiMacValue);
-  }
-
-  const char *mcuArchValue = network_getMcuArchStr();
-  if ((mcuArchValue != NULL) && (mcuArchValue[0] != '\0')) {
-    snprintf(mcuArch, sizeof(mcuArch), "%s", mcuArchValue);
-  }
-  const char *mcuIdValue = network_getMcuIdStr();
-  if ((mcuIdValue != NULL) && (mcuIdValue[0] != '\0')) {
-    snprintf(mcuId, sizeof(mcuId), "%s", mcuIdValue);
-  }
-
-  ip_addr_t currentIp = network_getCurrentIp();
-  bool hasIp = !ip_addr_isany(&currentIp);
-  term_printString(hasIp ? "Connected\n" : "Not connected\n");
-
-  if (hasIp) {
-    term_getIpStringOrNA(&currentIp, ipAddress, sizeof(ipAddress));
-
-    wifi_network_info_t currentNetwork = network_getCurrentNetworkInfo();
-    if (currentNetwork.ssid[0] != '\0') {
-      snprintf(ssid, sizeof(ssid), "%s", currentNetwork.ssid);
-      snprintf(authMode, sizeof(authMode), "%s",
-               network_getAuthTypeString(currentNetwork.auth_mode));
-    }
-    if (currentNetwork.bssid[0] != '\0') {
-      snprintf(bssid, sizeof(bssid), "%s", currentNetwork.bssid);
-    }
-    if ((currentNetwork.rssi <= 0) && (currentNetwork.rssi >= -120)) {
-      snprintf(signalDb, sizeof(signalDb), "%d dBm", currentNetwork.rssi);
-    }
-  }
-
-  struct netif *netIf = netif_default;
-
-  if (netIf != NULL) {
-    term_getIpStringOrNA(&(netIf->gw), gateway, sizeof(gateway));
-    term_getIpStringOrNA(&(netIf->netmask), netmask, sizeof(netmask));
-
-#if defined(LWIP_NETIF_HOSTNAME) && LWIP_NETIF_HOSTNAME
-    const char *runtimeHostname = netif_get_hostname(netIf);
-    if ((runtimeHostname != NULL) && (runtimeHostname[0] != '\0')) {
-      snprintf(hostName, sizeof(hostName), "%s", runtimeHostname);
-    }
-#endif
-  }
-
-  term_getIpStringOrNA(dns_getserver(0), dns1, sizeof(dns1));
-  term_getIpStringOrNA(dns_getserver(1), dns2, sizeof(dns2));
-#else
-  term_printString("Unavailable\n");
-#endif
-
-  menuRowsValid = false;
-
-  TPRINTF("MCU type  : %s (%s)\n", mcuArch, mcuId);
-  TPRINTF("Host name : %s\n", hostName);
-  TPRINTF("WiFi      : %s (%s)\n", wifiMode, wifiLink);
-  TPRINTF("IP        : %s (%s)\n", ipAddress, ipMode);
-  TPRINTF("Netmask   : %s\n", netmask);
-  TPRINTF("Gateway   : %s\n", gateway);
-  TPRINTF("DNS       : %s, %s\n", dns1, dns2);
-  TPRINTF("WiFi MAC  : %s\n", wifiMac);
-
-  menuRowSsid = cursorY;
-  TPRINTF("SSID      : %s (%s)\n", ssid, signalDb);
-
-  TPRINTF("BSSID     : %s\n", bssid);
-  TPRINTF("Auth mode : %s\n", authMode);
-
-  term_printString("\n");
-  menuRowSelect = cursorY;
-  TPRINTF("SELECT  : %s\n", selectState);
-
-  term_printString("\n");
-  menuRowSd = cursorY;
-  TPRINTF("SD card   : %s (%s)\n", sdStatus, sdSpace);
-
-  menuRowsValid = true;
-}
-
 void term_markMenuPromptCursor(void) {
   menuPromptRow = cursorY;
   menuPromptCol = cursorX;
   menuPromptValid = true;
-}
-
-static void term_appendMoveAndClearLine(char *buffer, size_t bufferSize,
-                                        size_t *offset, uint8_t row) {
-  if ((buffer == NULL) || (offset == NULL) || (*offset >= bufferSize)) {
-    return;
-  }
-
-  size_t remaining = bufferSize - *offset;
-  int written = snprintf(buffer + *offset, remaining,
-                         "\x1B"
-                         "Y%c%c\x1B"
-                         "K",
-                         (char)(TERM_POS_Y + row), (char)(TERM_POS_X));
-  if (written < 0) {
-    return;
-  }
-
-  size_t writeSize = (size_t)written;
-  if (writeSize >= remaining) {
-    *offset = bufferSize - 1;
-    return;
-  }
-
-  *offset += writeSize;
-}
-
-static void term_appendText(char *buffer, size_t bufferSize, size_t *offset,
-                            const char *text) {
-  if ((buffer == NULL) || (offset == NULL) || (text == NULL) ||
-      (*offset >= bufferSize)) {
-    return;
-  }
-
-  size_t remaining = bufferSize - *offset;
-  int written = snprintf(buffer + *offset, remaining, "%s", text);
-  if (written < 0) {
-    return;
-  }
-
-  size_t writeSize = (size_t)written;
-  if (writeSize >= remaining) {
-    *offset = bufferSize - 1;
-    return;
-  }
-
-  *offset += writeSize;
-}
-
-static bool term_buildLiveMenuLines(char *ssidLine, size_t ssidLineSize,
-                                    char *selectLine, size_t selectLineSize,
-                                    char *sdLine, size_t sdLineSize) {
-  if ((ssidLine == NULL) || (selectLine == NULL) || (sdLine == NULL) ||
-      (ssidLineSize == 0) || (selectLineSize == 0) || (sdLineSize == 0)) {
-    return false;
-  }
-
-  char ssid[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char signalDb[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char selectState[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char sdStatus[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-  char sdSpace[TERM_NETWORK_INFO_VALUE_SIZE] = {0};
-
-  snprintf(ssid, sizeof(ssid), "N/A");
-  snprintf(signalDb, sizeof(signalDb), "N/A");
-  snprintf(selectState, sizeof(selectState), "%s",
-           select_detectPush() ? "Pressed" : "Released");
-  snprintf(sdStatus, sizeof(sdStatus), "Not mounted");
-  snprintf(sdSpace, sizeof(sdSpace), "N/A");
-
-  uint32_t sdTotalMb = 0;
-  uint32_t sdFreeMb = 0;
-  if (sdcard_getMountedInfo(&sdTotalMb, &sdFreeMb)) {
-    snprintf(sdStatus, sizeof(sdStatus), "Mounted");
-    snprintf(sdSpace, sizeof(sdSpace), "%lu/%lu MB free",
-             (unsigned long)sdFreeMb, (unsigned long)sdTotalMb);
-  } else if (sdcard_isMounted()) {
-    snprintf(sdStatus, sizeof(sdStatus), "Error");
-  }
-
-#if defined(CYW43_WL_GPIO_LED_PIN)
-  ip_addr_t currentIp = network_getCurrentIp();
-  bool hasIp = !ip_addr_isany(&currentIp);
-  if (hasIp) {
-    wifi_network_info_t currentNetwork = network_getCurrentNetworkInfo();
-    if (currentNetwork.ssid[0] != '\0') {
-      snprintf(ssid, sizeof(ssid), "%s", currentNetwork.ssid);
-    }
-    if ((currentNetwork.rssi <= 0) && (currentNetwork.rssi >= -120)) {
-      snprintf(signalDb, sizeof(signalDb), "%d dBm", currentNetwork.rssi);
-    }
-  }
-#endif
-
-  snprintf(ssidLine, ssidLineSize, "SSID      : %s (%s)", ssid, signalDb);
-  snprintf(selectLine, selectLineSize, "SELECT  : %s", selectState);
-  snprintf(sdLine, sdLineSize, "SD card   : %s (%s)", sdStatus, sdSpace);
-
-  return true;
-}
-
-void term_refreshMenuLiveInfo(void) {
-  static char prevSsidLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-  static char prevSelectLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-  static char prevSdLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-
-  char ssidLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-  char selectLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-  char sdLine[TERM_MENU_LIVE_LINE_MAX] = {0};
-
-  if (!menuRowsValid ||
-      !term_buildLiveMenuLines(ssidLine, sizeof(ssidLine), selectLine,
-                               sizeof(selectLine), sdLine, sizeof(sdLine))) {
-    return;
-  }
-
-  bool updateSsid = (strcmp(ssidLine, prevSsidLine) != 0);
-  bool updateSelect = (strcmp(selectLine, prevSelectLine) != 0);
-  bool updateSd = (strcmp(sdLine, prevSdLine) != 0);
-
-  if (!updateSsid && !updateSelect && !updateSd) {
-    return;
-  }
-
-  char updateBuffer[512] = {0};
-  size_t offset = 0;
-
-  if (updateSsid) {
-    term_appendMoveAndClearLine(updateBuffer, sizeof(updateBuffer), &offset,
-                                menuRowSsid);
-    term_appendText(updateBuffer, sizeof(updateBuffer), &offset, ssidLine);
-  }
-
-  if (updateSelect) {
-    term_appendMoveAndClearLine(updateBuffer, sizeof(updateBuffer), &offset,
-                                menuRowSelect);
-    term_appendText(updateBuffer, sizeof(updateBuffer), &offset, selectLine);
-  }
-
-  if (updateSd) {
-    term_appendMoveAndClearLine(updateBuffer, sizeof(updateBuffer), &offset,
-                                menuRowSd);
-    term_appendText(updateBuffer, sizeof(updateBuffer), &offset, sdLine);
-  }
-
-  // Restore the cursor to the menu prompt input position.
-  if (menuPromptValid && (offset < sizeof(updateBuffer))) {
-    size_t remaining = sizeof(updateBuffer) - offset;
-    int written = snprintf(updateBuffer + offset, remaining,
-                           "\x1B"
-                           "Y%c%c",
-                           (char)(TERM_POS_Y + menuPromptRow),
-                           (char)(TERM_POS_X + menuPromptCol));
-    if (written > 0) {
-      size_t writeSize = (size_t)written;
-      if (writeSize >= remaining) {
-        offset = sizeof(updateBuffer) - 1;
-      } else {
-        offset += writeSize;
-      }
-    }
-  }
-
-  snprintf(prevSsidLine, sizeof(prevSsidLine), "%s", ssidLine);
-  snprintf(prevSelectLine, sizeof(prevSelectLine), "%s", selectLine);
-  snprintf(prevSdLine, sizeof(prevSdLine), "%s", sdLine);
-
-  term_printString(updateBuffer);
 }
 
 static bool term_parseKeyAndTail(const char *arg, char *key, size_t keySize,

@@ -13,8 +13,8 @@
 #include "debug.h"
 #include "settings.h"
 
-#define ACONFIG_PARAM_FOLDER "FOLDER"
 #define ACONFIG_PARAM_MODE "MODE"
+#define ACONFIG_PARAM_DONGLE "DONGLE"
 
 #define ACONFIG_SUCCESS 0
 #define ACONFIG_INIT_ERROR -1
