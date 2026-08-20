@@ -19,13 +19,6 @@ cp version.txt target/
 export VERSION=$(cat version.txt)
 echo "Version: $VERSION"
 
-# Pin the atarist-toolkit-docker image tag to a published tag. Some stcmd
-# wrappers otherwise derive it from $VERSION (e.g. "v1.2.1"), which is not a
-# published image, so `stcmd make` fails to pull it. The app version has nothing
-# to do with the toolchain image version — always use the "latest" toolkit.
-export STCMD_IMAGE_TAG="${STCMD_IMAGE_TAG:-latest}"
-echo "stcmd image tag: $STCMD_IMAGE_TAG"
-
 # Set the board type to be used for building
 export BOARD_TYPE=$1
 echo "Board type: $BOARD_TYPE"
@@ -43,10 +36,16 @@ echo "Delete previous dist directory"
 rm -rf dist
 mkdir dist
 
-# Build the project in the target architecture
+# Build the project in the target architecture.
+# Pin the atarist-toolkit-docker image tag to a published one for the m68k build
+# only. The stcmd wrappers derive the tag from $VERSION (older CI wrapper) or
+# $STCMD_IMAGE_TAG (newer), and our $VERSION is the *app* version (e.g. v1.2.1),
+# which is not a published toolkit image — so `stcmd make` fails to pull it.
+# Overriding both for this subprocess is safe: the toolkit's own Makefile reads
+# target/atarist/version.txt, not this $VERSION.
 echo "Building target project"
 cd target/atarist
-./build.sh "$SCRIPT_DIR/target/atarist" release
+VERSION=latest STCMD_IMAGE_TAG=latest ./build.sh "$SCRIPT_DIR/target/atarist" release
 target_status=$?
 cd ../..
 if [ "$target_status" -ne 0 ]; then
