@@ -88,9 +88,26 @@ fi
 echo "File has been resized."
 
 echo "Creating the firmware.h file."
+# firmware.py trims trailing zeros and requires a whole number of 16-bit words;
+# it aborts on an odd-length image. If this is not checked, a failure here
+# leaves rp/src/include/target_firmware.h stale and the RP build silently embeds
+# the previous cartridge — the exact "ST display is stale" trap in the docs.
 python firmware.py --input=dist/FIRMWARE.IMG --output=$target_firmware --array_name=target_firmware
+firmware_status=$?
+if [ "$firmware_status" -ne 0 ]; then
+    echo "ERROR: firmware.py failed (status $firmware_status); target_firmware.h NOT regenerated"
+    exit 6
+fi
+if [ ! -f "$target_firmware" ]; then
+    echo "ERROR: firmware.py did not produce $target_firmware"
+    exit 6
+fi
 
 cp $target_firmware ../../rp/src/include/$target_firmware
+if [ $? -ne 0 ]; then
+    echo "ERROR: failed to copy $target_firmware into rp/src/include/"
+    exit 7
+fi
 echo "Copied $target_firmware to rp/src/include/$target_firmware"
 
 rm $target_firmware

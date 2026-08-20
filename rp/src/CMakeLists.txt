@@ -208,7 +208,7 @@ endif()
 
 if (NOT _DEBUG)
         set(_DEBUG 1)
-endif()
+endif() 
 
 # Debug outputs
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
