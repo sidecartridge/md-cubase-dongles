@@ -2,7 +2,7 @@
 id: STORY-02
 epic: EPIC-05
 title: cubaseemul.c runtime (Core1 busy-poll)
-status: todo
+status: done
 ---
 
 ## Goal
@@ -12,10 +12,10 @@ holding the correctness invariant.
 
 ## Tasks
 
-- [ ] Core1 busy-poll: `v=rxf; a8=(v>>8)&1; e=lut[state][a8]; state=e&0x1FFF; txf = (e>>13)&1 ? 0xFFFF : 0xFEFF;`
-- [ ] Pre-stage RESET_OUTPUT_WORD into TX before enabling the SM; init state = RESET_STATE_ID
-- [ ] LUT in SRAM (C-04); handler `__not_in_flash_func`
-- [ ] Validate the D8 stream against golden vectors for a scripted A8 sequence on hardware
+- [x] Core1 busy-poll: `v=rxf; a8=(v>>8)&1; e=lut[state][a8]; state=e&0x1FFF; txf = (e>>13)&1 ? 0xFFFF : 0xFEFF;`
+- [x] Pre-stage RESET_OUTPUT_WORD into TX before enabling the SM; init state = RESET_STATE_ID
+- [x] LUT in SRAM (C-04); handler `__not_in_flash_func`
+- [x] Validate the D8 stream against golden vectors for a scripted A8 sequence on hardware
 
 ## Acceptance
 

@@ -25,6 +25,7 @@ static uint16_t commRing[COMM_RING_WORDS]
 static uint32_t commReadIdx = 0;
 static int commDmaChannel = -1;
 static int commSm = -1;
+static int commOffset = -1;
 static bool commInitialized = false;
 static PIO commPio = pio0;
 
@@ -45,13 +46,13 @@ int commemul_init(void) {
   gpio_set_pulls(ROM3_GPIO, true, false);
   gpio_pull_up(ROM3_GPIO);
 
-  int offset = pio_add_program(commPio, &commemul_read_program);
-  if (offset < 0) {
-    DPRINTF("commemul_init: pio_add_program failed (%d)\n", offset);
+  commOffset = pio_add_program(commPio, &commemul_read_program);
+  if (commOffset < 0) {
+    DPRINTF("commemul_init: pio_add_program failed (%d)\n", commOffset);
     return -1;
   }
   commSm = pio_claim_unused_sm(commPio, true);
-  commemul_read_program_init(commPio, commSm, (uint)offset,
+  commemul_read_program_init(commPio, commSm, (uint)commOffset,
                              READ_ADDR_GPIO_BASE, READ_ADDR_PIN_COUNT,
                              READ_SIGNAL_GPIO_BASE, SAMPLE_DIV_FREQ);
 
@@ -86,6 +87,26 @@ int commemul_init(void) {
           commSm, commDmaChannel, (unsigned int)COMM_RING_WORDS,
           (unsigned int)COMM_RING_SIZE_BYTES);
   return 0;
+}
+
+void commemul_deinit(void) {
+  if (!commInitialized) {
+    return;
+  }
+  // Stop the SM, tear down the capture DMA, and return the PIO program slots +
+  // state machine so another engine (cubaseemul) can claim pio0. The shared
+  // bus/READ/WRITE GPIOs stay assigned to pio0 for romemul and the successor.
+  pio_sm_set_enabled(commPio, commSm, false);
+  dma_channel_abort(commDmaChannel);
+  dma_channel_unclaim(commDmaChannel);
+  pio_remove_program(commPio, &commemul_read_program, (uint)commOffset);
+  pio_sm_unclaim(commPio, commSm);
+  commDmaChannel = -1;
+  commSm = -1;
+  commOffset = -1;
+  commReadIdx = 0;
+  commInitialized = false;
+  DPRINTF("ROM3 comm ring torn down\n");
 }
 
 void __not_in_flash_func(commemul_poll)(CommEmulSampleCallback callback) {

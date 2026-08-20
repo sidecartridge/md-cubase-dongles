@@ -1,0 +1,89 @@
+; RP2040 PIO program: Cubase 3 red-dongle ROM3 state-machine engine.
+;
+; The romemul ROM4 "dance" at smaller scale (DECISIONS D-08): per ROM3 access it
+; samples A8 (the LUT input) and drives D8 (the output) -- the same shared pin
+; GP14 at the address vs data phase. The driven word is fed by Core1 through the
+; TX FIFO (the LUT step); the sampled access is pushed to the RX FIFO for Core1.
+; State advances on the /ROM3 rising edge, so the word driven during an access
+; is the previous state's output -- Core1 pre-stages the reset output before the
+; SM is enabled, then keeps the pipeline one step ahead.
+;
+; Runs on pio0 (16 instr) alongside romemul (16), so the two fill pio0 exactly.
+; It replaces commemul at the [F]irmware mode commit.
+; Author: Diego Parrilla Santamaría
+; Date: August 2026
+
+; !ROM3 signal
+.define public ROM3_GPIO 26
+
+.define public ACTIVE 0
+.define public INACTIVE 1
+
+; Inverted READ/WRITE side-set pair (READ = LSB, WRITE = MSB)
+.define public READ_WRITE 0b00
+.define public NOT_READ_WRITE 0b01
+.define public READ_NOT_WRITE 0b10
+.define public NOT_READ_NOT_WRITE 0b11
+
+.define public BUS_PINS 16
+.define public READ_ADDRESS_SAFE_WAIT_CYCLES 3
+
+.program cubaseemul_read
+    .side_set 2 opt
+
+; Preamble: park the shared bus as input / high-Z.
+    mov osr, null                  side NOT_READ_NOT_WRITE
+    out pindirs, BUS_PINS
+
+.wrap_target
+; Wait for the ROM3 access, then take Core1's pre-staged output word. If Core1
+; is late this pull stalls here with the bus still high-Z (side-set is
+; NOT_READ_NOT_WRITE from the release below), which is benign -- no strobe is
+; held asserted. Stash it in Y so it survives the pindirs flips.
+    wait ACTIVE gpio ROM3_GPIO
+    pull block
+    mov y, osr
+
+; Assert !READ, settle, and sample the access (A8 = bit 8) into the RX FIFO.
+    nop                            side READ_NOT_WRITE [READ_ADDRESS_SAFE_WAIT_CYCLES]
+    nop                                             [READ_ADDRESS_SAFE_WAIT_CYCLES]
+    nop                                             [READ_ADDRESS_SAFE_WAIT_CYCLES]
+    in pins BUS_PINS
+
+; Flip the shared bus to output and drive the word (READ inactive, WRITE active).
+    mov osr, ~null
+    out pindirs, BUS_PINS
+    mov osr, y
+    out pins BUS_PINS              side NOT_READ_WRITE
+
+; Hold until the cycle ends, then release the bus back to input / high-Z.
+    wait INACTIVE gpio ROM3_GPIO
+    mov osr, null                  side NOT_READ_NOT_WRITE
+    out pindirs, BUS_PINS
+.wrap
+
+% c-sdk {
+
+static inline void cubaseemul_read_program_init(PIO pio, uint sm, uint offset,
+                                                uint bus_pin_base,
+                                                uint bus_pin_count,
+                                                uint rw_pin_base, float div) {
+    pio_sm_config c = cubaseemul_read_program_get_default_config(offset);
+
+    sm_config_set_in_pins(&c, bus_pin_base);
+    // Shift left, autopush: the 16-bit sample lands in RX FIFO bits [15:0], so
+    // Core1 reads A8 as bit 8.
+    sm_config_set_in_shift(&c, false, true, bus_pin_count);
+    // Shift right, NO autopull: the drive word is loaded explicitly (pull/mov y),
+    // so the release `out pindirs` never consumes a TX word.
+    sm_config_set_out_pins(&c, bus_pin_base, bus_pin_count);
+    sm_config_set_out_shift(&c, true, false, bus_pin_count);
+    sm_config_set_sideset_pins(&c, rw_pin_base);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, rw_pin_base, 2, true);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+%}
