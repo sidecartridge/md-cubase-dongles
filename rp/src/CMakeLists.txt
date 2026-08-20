@@ -89,12 +89,6 @@ add_subdirectory(settings)
 # Add u8g2 library
 add_subdirectory(u8g2)
 
-# Add HTTP client library
-add_subdirectory(httpc)
-
-# Tell CMake where to find other source code
-add_subdirectory(${FATFS_SDK_PATH}/src build)
-  
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
         main.c
@@ -106,20 +100,15 @@ pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/cubaseemul.pi
 
 target_sources(${PROJECT_NAME} PRIVATE
         aconfig.c
-        blink.c
         chandler.c
         commemul.c
         cubaseemul.c
         display.c
         display_term.c
-        download.c
         emul.c
         gconfig.c
-        hw_config.c
-        network.c
         reset.c
         romemul.c
-        sdcard.c
         select.c
         term.c
         tprotocol.c
@@ -132,43 +121,28 @@ pico_add_extra_outputs(${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBRARIES}        # External or additional libraries passed as variables
     hardware_flash           # Flash memory access
-    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico                # FATFS library   
+    hardware_pio             # ROM4/ROM3/dongle PIO engines
+    hardware_dma             # DMA for ROM read + command ring buffer
+    hardware_clocks          # Clock configuration (overclock)
+    hardware_vreg            # Core voltage for overclock
+    hardware_watchdog        # Soft reset / jump to booster
+    hardware_resets          # Peripheral resets
+    hardware_sync            # Spin locks / memory sync
     pico_stdlib              # Core functionality
     pico_multicore          # Multicore support
-    httpc                    # HTTP client
     settings                 # Custom settings library
     u8g2                     # for display
 )
-
-# Conditionally link the CYW43 architecture library if supported
-if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        pico_cyw43_arch_lwip_poll
-#        pico_cyw43_arch_lwip_threadsafe_background
-        )
-else()
-    message(WARNING "CYW43 architecture not supported")
-endif()
 
 # Link custom memmap with reserved memory for ROMs
 set_target_properties(${PROJECT_NAME} PROPERTIES
         PICO_TARGET_LINKER_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/memmap_rp.ld
 )
 
-# Make our project-local FatFs config (rp/src/ff/ffconf.h) win over the
-# fatfs-sdk submodule's default copy. fatfs sources do `#include "ffconf.h"`
-# which is resolved against the include path; placing this BEFORE PRIVATE
-# guarantees our override is found first, so the submodule stays pristine
-# and no on-the-fly sed patching is needed.
-target_include_directories(${PROJECT_NAME} BEFORE PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}/ff)
-
-# Needed to include lwipopts.h properly
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/..)
-
 
 # Use reduced space for ROMs
 pico_set_binary_type(${PROJECT_NAME} rp)
