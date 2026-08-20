@@ -80,7 +80,7 @@ end-state; the Core1 version stays as reference/fallback.
 | Epic | Status | Note |
 | --- | --- | --- |
 | EPIC-07 zero-CPU PIO+DMA state machine | done | state in PIO Y; 2 chained DMAs fetch + feed back next-state; romemul freed for pio0; Cubase 3.10 accepts it |
-| EPIC-08 hardening | todo | burst-timing validation, pin15/full-word confirmation, optional Cubase Score |
+| EPIC-08 hardening | done | timing/pin15/full-word validated functionally (Cubase 3.10 + Score 2.0, both engines); Score covered by the V3 dongle |
 | EPIC-09 app identity & release build | todo | `desc/app.json`, version, UUID; full build; real Cubase acceptance — done last |
 
 Same working rules throughout: strictly sequential, a hardware-verification

@@ -2,7 +2,7 @@
 id: EPIC-08
 iteration: 3
 title: Hardening
-status: todo
+status: done
 ---
 
 ## Goal
