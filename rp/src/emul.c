@@ -15,6 +15,7 @@
 #include "chandler.h"
 #include "commemul.h"
 #include "constants.h"
+#include "cubaseemul.h"
 #include "debug.h"
 #include "display.h"
 #include "ff.h"
@@ -142,12 +143,14 @@ void cmdExit(const char *arg) {
 
 void cmdFirmware(const char *arg) {
   menuScreenActive = false;
-  term_printString("Launching user firmware on the Atari ST...\n");
-  // Write CMD_START into the cartridge sentinel slot. The m68k's
-  // check_commands macro polls the slot every vsync; on CMD_START it
-  // beq's into rom_function, which jmp's to USERFW (target/atarist/src/
-  // userfw.s). The default userfw demo prints
-  // "Example firmware load..." via Cconws and returns.
+  term_printString("Committing to Cubase dongle mode...\n");
+  // Mode commit (D-03): tear down the ROM3 command channel and stand up the
+  // dongle state-machine engine on pio0 + Core1, from its reset state. This is
+  // one-way -- the setup menu is gone until the MultiDevice is reset.
+  cubaseemul_start();
+  // Then write CMD_START into the cartridge sentinel. The m68k's check_commands
+  // macro polls it and jmp's to USERFW (target/atarist/src/userfw.s), which now
+  // reads ROM3 (served by the dongle engine).
   SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_START);
 }
 

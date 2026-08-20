@@ -26,6 +26,9 @@ typedef void (*CommEmulSampleCallback)(uint16_t sample);
 // exhaustion" variants, so those paths abort the whole boot rather
 // than returning here.
 int commemul_init(void);
+// Tear down the ROM3 command channel (SM, DMA, PIO program) so pio0 can be
+// reclaimed by the dongle engine at the [F]irmware mode commit. Idempotent.
+void commemul_deinit(void);
 void __not_in_flash_func(commemul_poll)(CommEmulSampleCallback callback);
 
 #endif  // COMMEMUL_H
