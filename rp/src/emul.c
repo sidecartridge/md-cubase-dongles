@@ -21,10 +21,9 @@
 #include "aconfig.h"
 #include "chandler.h"
 #include "commemul.h"
+#include "cubase2emul.h"
 #include "cubaseemul_dma.h"
-#ifdef CUBASE2_GATE
-#include "cubase2_monitor.h"
-#endif
+#include "debug.h"
 #include "display.h"
 #include "memfunc.h"
 #include "pico/stdlib.h"
@@ -65,7 +64,7 @@ static const char *const CAF_COVERS[] = {"CAF 2.01", "CAF 2.02", "CAF 2.06",
 
 static const DongleVariant DONGLES[] = {
     {"CUBASE_V1", "Cubase V1", CUBASE_V1_COVERS, false},
-    {"CUBASE_V2_BLACK", "Cubase V2 (black)", CUBASE_V2_COVERS, false},
+    {"CUBASE_V2_BLACK", "Cubase V2 (black)", CUBASE_V2_COVERS, true},
     {"CUBASE_V3", "Cubase V3", CUBASE_V3_COVERS, true},
     {"CUBASE_AUDIO_FALCON", "Cubase Audio Falcon", CAF_COVERS, false},
 };
@@ -89,6 +88,13 @@ static const size_t numCommands = sizeof(commands) / sizeof(commands[0]);
 static bool keepActive = true;
 static bool jumpToBooster = false;
 static bool menuScreenActive = false;
+
+// After the Cubase 2 black-dongle commit, Core0 prints a once-a-second health
+// heartbeat (tracked state, capture rate, monitor missed-edge) for the first
+// hardware bring-up. Off for the red dongle and while the menu is up.
+static bool cubase2HeartbeatActive = false;
+static absolute_time_t lastHeartbeat;
+static uint32_t lastHeartbeatCaptures = 0;
 
 // Auto-boot countdown (copied from md-drives-emulator).
 static int countdown = 0;
@@ -224,6 +230,9 @@ static void menu(void) {
     term_printString("\n");
   }
   term_printString("\n");
+  // Short research/ownership notice (see README "Provenance & legal").
+  term_printString("For research and study only.\n");
+  term_printString("Use only with Cubase software you own.\n\n");
   if (availableDongleCount() > 1) {
     term_printString("[D] Change dongle\n\n");
   }
@@ -252,15 +261,22 @@ static void cmdEnterGem(const char *arg) {
   persistSelectedDongle();
   term_printString("Committing to dongle mode and booting GEM...\n");
   display_refresh();
-  // Mode commit (EPIC-07, zero-CPU PIO+DMA). Boot GEM FIRST: tell the m68k to
-  // read CMD_START and run userfw — both are ROM4 reads that romemul must still
-  // serve. After a settle delay, cubaseemul_dma_start() frees commemul AND
-  // romemul to reclaim all of pio0, builds the DMA LUT, and stands up the
-  // PIO + 2-DMA engine (no Core1). One-way — reset the MultiDevice for the menu.
+  // Mode commit. Boot GEM FIRST: tell the m68k to read CMD_START and run userfw —
+  // both are ROM4 reads that romemul must still serve. After a settle delay, the
+  // selected family's engine frees commemul + romemul and takes over the bus.
+  // One-way — reset the MultiDevice to get back to the menu.
   SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_START);
   sleep_ms(GEM_BOOT_SETTLE_MS);
-  cubaseemul_dma_start();
-  // Stay in the loop: the PIO+DMA engine serves the dongle while Cubase runs.
+  if (strcmp(DONGLES[selectedDongle].id, "CUBASE_V2_BLACK") == 0) {
+    // Cubase 2 black dongle (EPIC-12): continuous /UDS monitor + ROM3 drive.
+    cubase2emul_start();
+    cubase2HeartbeatActive = true;
+    lastHeartbeat = get_absolute_time();
+  } else {
+    // Cubase 3 red dongle (EPIC-07): zero-CPU PIO+DMA state machine (frozen).
+    cubaseemul_dma_start();
+  }
+  // Stay in the loop: the engine serves the dongle while Cubase runs.
 }
 
 static void cmdBooster(const char *arg) {
@@ -284,35 +300,6 @@ static void init(void) {
   display_refresh();
 }
 
-#ifdef CUBASE2_GATE
-// EPIC-11 gate: boot GEM (so the ST generates real bus traffic and romemul is no
-// longer needed), then take the bus and watch /UDS, reporting over the serial
-// console. Build with `CUBASE2_GATE=1 ./build.sh pico_w debug <uuid>` (debug so
-// stdio reaches the UART). Never returns; reset the MultiDevice to exit.
-static void cubase2_gate_run(void) {
-  term_clearScreen();
-  term_printString("\x1B"
-                   "E"
-                   "Cubase 2 /UDS monitor gate\n\n"
-                   "Booting GEM, then watching /UDS on the serial console...\n");
-  display_refresh();
-  SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_START);
-  sleep_ms(GEM_BOOT_SETTLE_MS);
-  cubase2_monitor_gate_start();
-
-  uint32_t previous = 0;
-  while (true) {
-    sleep_ms(1000);
-    uint32_t captures = cubase2_monitor_captures();
-    bool stalled = cubase2_monitor_consume_rxstall();
-    printf("[cubase2-gate] state=0x%02X captures=%lu (+%lu/s) missed_edge=%s\n",
-           cubase2_monitor_state(), (unsigned long)captures,
-           (unsigned long)(captures - previous), stalled ? "YES(!)" : "no");
-    previous = captures;
-  }
-}
-#endif
-
 void emul_start() {
   // Copy the m68k cartridge driver into the emulated ROM and bring up the
   // cartridge-bus engines: ROM4 read (romemul) + ROM3 command capture
@@ -333,10 +320,6 @@ void emul_start() {
   select_configure();
   select_setResetCallback(onSelectShortPress);
   select_setLongResetCallback(onSelectLongPress);
-
-#ifdef CUBASE2_GATE
-  cubase2_gate_run();  // EPIC-11 /UDS-monitor gate; never returns
-#endif
 
   // Read the persisted dongle selection and show the boot menu.
   loadSelectedDongle();
@@ -373,6 +356,21 @@ void emul_start() {
 
     // Redraw the status bar only when its content changed (no flicker).
     refreshInfoLine();
+
+    // Black-dongle bring-up heartbeat: is the monitor still healthy while the
+    // drive runs? captures should climb fast and missed_edge stay "no".
+    if (cubase2HeartbeatActive) {
+      absolute_time_t now = get_absolute_time();
+      if (absolute_time_diff_us(lastHeartbeat, now) >= ONE_SECOND_US) {
+        lastHeartbeat = now;
+        uint32_t captures = cubase2emul_captures();
+        DPRINTF("[cubase2] state=0x%02X captures=%lu (+%lu/s) missed_edge=%s\n",
+                cubase2emul_state(), (unsigned long)captures,
+                (unsigned long)(captures - lastHeartbeatCaptures),
+                cubase2emul_consume_missed_edge() ? "YES(!)" : "no");
+        lastHeartbeatCaptures = captures;
+      }
+    }
   }
 
   // The loop only exits for Booster. Reset the m68k, then jump to Booster.
