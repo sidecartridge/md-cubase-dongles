@@ -115,6 +115,17 @@ target_sources(${PROJECT_NAME} PRIVATE
         tprotocol.c
         settings/settings.c)
 
+# EPIC-11 /UDS-monitor gate (Cubase 2 black dongle). Compiled ONLY when the
+# CUBASE2_GATE env var is set, so normal builds are unaffected:
+#   CUBASE2_GATE=1 ./build.sh pico_w debug <uuid>
+# (debug so the gate's serial-console report reaches the UART).
+if(DEFINED ENV{CUBASE2_GATE} AND NOT "$ENV{CUBASE2_GATE}" STREQUAL "")
+    message(STATUS "CUBASE2_GATE enabled -- building the Cubase 2 /UDS monitor gate")
+    add_definitions(-DCUBASE2_GATE=1)
+    pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/cubase2_monitor.pio)
+    target_sources(${PROJECT_NAME} PRIVATE cubase2_monitor.c)
+endif()
+
 # Create map/bin/hex/uf2 files
 pico_add_extra_outputs(${PROJECT_NAME})
 
