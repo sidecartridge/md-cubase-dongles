@@ -25,6 +25,9 @@ jobs:
     - name: Verify the committed Cubase LUT
       run: python3 tools/test_lut.py
 
+    - name: Verify the committed Cubase 2 black-dongle LUT
+      run: python3 tools/test_cubase2_lut.py
+
     - name: Install the Pico Toolchain
       run: |
           sudo DEBIAN_FRONTEND=noninteractive apt update
