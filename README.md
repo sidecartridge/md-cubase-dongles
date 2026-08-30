@@ -47,7 +47,7 @@ Verified on hardware: Cubase 3.10 and Cubase Score 2.0 (red) and Cubase 2.01
 On power-on the boot menu appears:
 
 ```
-Cubase Dongle Emulator - v1.0.0beta
+Cubase Dongle Emulator - v1.0.0
 
 Emulated dongle:  Cubase V3
     - Cubase 3.0
