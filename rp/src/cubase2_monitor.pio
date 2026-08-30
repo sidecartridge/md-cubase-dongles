@@ -1,0 +1,42 @@
+; RP2040 PIO program: Cubase 2 black-dongle /UDS bus monitor (EPIC-11 gate).
+;
+; The black dongle is an 8-bit FSM clocked on /UDS (== A0), and it advances on
+; EVERY 68000 bus cycle, not just ROM3 reads (D-12, C-06). So we must watch the
+; bus continuously. The C side holds /READ active (address side-shifter enabled)
+; and parks GP6-21 as input; this SM then, per bus cycle:
+;
+;   1. waits for A0(/UDS) to fall (bus cycle active, address A[8:1] valid),
+;   2. samples A[8:1] (GP7..GP14) into the RX FIFO for a dedicated core,
+;   3. waits for A0(/UDS) to rise -- the FSM clock edge -- pacing one capture
+;      per cycle.
+;
+; Monitor-only (it never drives the bus), so it runs on a spare pio1 SM and does
+; not touch the (frozen) red-dongle engine. If the consuming core ever falls
+; behind a full RX FIFO, autopush stalls and sets FDEBUG.RXSTALL -- the gate's
+; "missed a cycle" health flag.
+;
+; Author: Diego Parrilla Santamaría. Date: August 2026.
+
+.define public UDS_A0_GPIO 6   ; bit 0 of the multiplexed bus = A0 = /UDS
+.define public A_PIN_BASE   7   ; A1..A8 = GP7..GP14 (A1 = bit 0 of the capture)
+
+.program cubase2_monitor
+.wrap_target
+    wait 0 gpio UDS_A0_GPIO     ; /UDS asserted -> bus cycle active, A[8:1] valid
+    in pins, 8                  ; capture A[8:1] (in-base = A_PIN_BASE); autopush
+    wait 1 gpio UDS_A0_GPIO     ; /UDS rising edge = the FSM clock
+.wrap
+
+% c-sdk {
+
+static inline void cubase2_monitor_program_init(PIO pio, uint sm, uint offset,
+                                                uint a_pin_base, float div) {
+    pio_sm_config c = cubase2_monitor_program_get_default_config(offset);
+    // Capture the 8 A-lines (A1 at bit 0). Shift left, autopush at 8 bits.
+    sm_config_set_in_pins(&c, a_pin_base);
+    sm_config_set_in_shift(&c, false, true, 8);
+    sm_config_set_clkdiv(&c, div);
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+%}

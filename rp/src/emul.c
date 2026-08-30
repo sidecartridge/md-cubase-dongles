@@ -22,6 +22,9 @@
 #include "chandler.h"
 #include "commemul.h"
 #include "cubaseemul_dma.h"
+#ifdef CUBASE2_GATE
+#include "cubase2_monitor.h"
+#endif
 #include "display.h"
 #include "memfunc.h"
 #include "pico/stdlib.h"
@@ -281,6 +284,35 @@ static void init(void) {
   display_refresh();
 }
 
+#ifdef CUBASE2_GATE
+// EPIC-11 gate: boot GEM (so the ST generates real bus traffic and romemul is no
+// longer needed), then take the bus and watch /UDS, reporting over the serial
+// console. Build with `CUBASE2_GATE=1 ./build.sh pico_w debug <uuid>` (debug so
+// stdio reaches the UART). Never returns; reset the MultiDevice to exit.
+static void cubase2_gate_run(void) {
+  term_clearScreen();
+  term_printString("\x1B"
+                   "E"
+                   "Cubase 2 /UDS monitor gate\n\n"
+                   "Booting GEM, then watching /UDS on the serial console...\n");
+  display_refresh();
+  SEND_COMMAND_TO_DISPLAY(DISPLAY_COMMAND_START);
+  sleep_ms(GEM_BOOT_SETTLE_MS);
+  cubase2_monitor_gate_start();
+
+  uint32_t previous = 0;
+  while (true) {
+    sleep_ms(1000);
+    uint32_t captures = cubase2_monitor_captures();
+    bool stalled = cubase2_monitor_consume_rxstall();
+    printf("[cubase2-gate] state=0x%02X captures=%lu (+%lu/s) missed_edge=%s\n",
+           cubase2_monitor_state(), (unsigned long)captures,
+           (unsigned long)(captures - previous), stalled ? "YES(!)" : "no");
+    previous = captures;
+  }
+}
+#endif
+
 void emul_start() {
   // Copy the m68k cartridge driver into the emulated ROM and bring up the
   // cartridge-bus engines: ROM4 read (romemul) + ROM3 command capture
@@ -301,6 +333,10 @@ void emul_start() {
   select_configure();
   select_setResetCallback(onSelectShortPress);
   select_setLongResetCallback(onSelectLongPress);
+
+#ifdef CUBASE2_GATE
+  cubase2_gate_run();  // EPIC-11 /UDS-monitor gate; never returns
+#endif
 
   // Read the persisted dongle selection and show the boot menu.
   loadSelectedDongle();
