@@ -16,3 +16,28 @@ Reachable states: 5999 (pin15=0), 6149 (pin15=1), 6150 (union). Power-on univers
 
 Origin: atari-forum thread "Cartridge keys and emulation" (t=20130); the m68k
 emulator is the Medway Boys 2022 Cubase 3.10 dongle crack.
+
+---
+
+# Provenance -- Cubase 2 black dongle reference source
+
+The Cubase 2 "black dongle" (routine A) is derived from the MiSTery open-source
+Atari ST core's functional model, `atarist/cubase2_dongle.v`. It is public GPL
+code; we do not vendor it here. The eight next-state equations are transcribed
+into `tools/generate_lut.py`'s sibling `tools/generate_cubase2_lut.py`, and the
+2048-byte `rp/src/include/cubase2_lut.h` is verified exhaustively against them
+(`tools/test_cubase2_lut.py`, run in CI).
+
+| role | source | identifier |
+| --- | --- | --- |
+| Verilog model | `gyurco/MiSTery` `atarist/cubase2_dongle.v` | git blob `2df21d25e65ca09d1419b37a5f36104d3e7b7ef7` |
+
+- Source URL: <https://github.com/gyurco/MiSTery/blob/master/atarist/cubase2_dongle.v>
+- Referenced commit: `15b528b54beb48fbcb26e32677685015ae5d6629`
+- SHA-256 of the file content: `544ee172b71bfda889fda2289bdf3ce23d8a5ea376340b95467c87171b9ab546`
+
+Model: 8-bit registered FSM, state = D[15:8], reset 0x00, clock = /UDS rising
+edge, input = A[8:1], read = `state<<8 | 0xFF`. All 256 states reachable from
+0x00; input reduces to `{A5,A4,A1}` outside the special address `A[8:1]==0xD8`
+(which resets the machine). MiSTery added Cubase 2 dongle support in Apr 2022 --
+an independent confirmation the equations are used in a working implementation.

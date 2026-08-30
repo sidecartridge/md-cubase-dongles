@@ -69,3 +69,5 @@ SRD_OK
 CUBASE.S
 CUBSCORE.S
 tools/reference/sources/
+__pycache__/
+*.pyc
