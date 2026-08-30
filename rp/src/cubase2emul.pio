@@ -1,0 +1,86 @@
+; RP2040 PIO program: Cubase 2 black-dongle ROM3 data drive (EPIC-12).
+;
+; The companion cubase2_monitor SM (pio1) tracks the 8-bit FSM on /UDS and keeps
+; a live 16-bit `g_driveWord = (state<<8) | 0xFF` in RAM. This SM owns the bus and
+; drives that word whenever the Atari reads the dongle on /ROM3.
+;
+; Idle side-set is READ active / WRITE inactive with the bus parked as input, so
+; the monitor can read the address bus continuously. On a /ROM3 access this SM
+; fetches g_driveWord FRESH (push its fixed address -> DMA-A -> DMA-B reads the
+; word -> TX FIFO), flips the bus to output with /WRITE, drives it, then restores
+; the input / READ idle. The low byte 0xFF means bit 0 (GP6 = A0/UDS position) is
+; driven high during the drive, which keeps the monitor's /UDS pacing well-behaved.
+;
+; Modelled on the (frozen) red engine cubaseemul_dma.pio, but with a constant
+; fetch address instead of a state-indexed LUT lookup, and a READ-active idle (the
+; red engine idles both strobes off; this one holds READ so the monitor sees the
+; bus). Author: Diego Parrilla Santamaría. Date: August 2026.
+
+.define public ROM3_GPIO 26
+
+.define public ACTIVE 0
+.define public INACTIVE 1
+
+; Inverted READ/WRITE side-set pair (READ = LSB, WRITE = MSB)
+.define public READ_WRITE 0b00
+.define public NOT_READ_WRITE 0b01
+.define public READ_NOT_WRITE 0b10
+.define public NOT_READ_NOT_WRITE 0b11
+
+.define public BUS_PINS 16
+
+.program cubase2emul_drive
+    .side_set 2 opt
+
+; Preamble: X = &g_driveWord (the fixed 32-bit fetch address, pushed by C).
+; Idle READ active so the monitor keeps seeing the bus; park GP6-21 as input.
+    pull block                     side READ_NOT_WRITE
+    mov x, osr
+    mov osr, null
+    out pindirs, BUS_PINS
+
+.wrap_target
+    wait ACTIVE gpio ROM3_GPIO
+
+; Fetch g_driveWord fresh: push its address (DMA-A -> DMA-B -> TX FIFO), then take
+; the word while the bus is still input (a benign stall if the DMA is late).
+    mov isr, x
+    push block
+    pull block
+    mov isr, osr                   ; stash g_driveWord (ISR is free after the push)
+
+; Turn READ off BEFORE switching the bus to output (avoid address-shifter
+; contention), flip to output, then drive the word with WRITE asserted.
+    mov osr, ~null                 side NOT_READ_NOT_WRITE
+    out pindirs, BUS_PINS
+    mov osr, isr
+    out pins, BUS_PINS             side NOT_READ_WRITE
+
+; Hold until the access ends, then restore input / READ-active idle.
+    wait INACTIVE gpio ROM3_GPIO
+    mov osr, null                  side READ_NOT_WRITE
+    out pindirs, BUS_PINS
+.wrap
+
+% c-sdk {
+
+static inline void cubase2emul_drive_program_init(PIO pio, uint sm, uint offset,
+                                                  uint bus_pin_base,
+                                                  uint rw_pin_base, float div) {
+    pio_sm_config c = cubase2emul_drive_program_get_default_config(offset);
+
+    // The push carries the fixed 32-bit fetch address (manual push, no autopush).
+    sm_config_set_in_shift(&c, false, false, 32);
+    // OUT drives the 16-bit bus / sets pindirs. Shift right, no autopull -- the
+    // word is pulled explicitly and each `out ...,16` consumes one 16-bit field.
+    sm_config_set_out_pins(&c, bus_pin_base, BUS_PINS);
+    sm_config_set_out_shift(&c, true, false, BUS_PINS);
+    sm_config_set_sideset_pins(&c, rw_pin_base);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, rw_pin_base, 2, true);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+%}
