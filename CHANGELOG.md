@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0beta (2026-08-20) - first release
+## v1.0.0 (2026-08-20) - first release
 
 First public build of the **Cubase Dongle Emulator**, a SidecarTridge
 MultiDevice microfirmware that emulates Steinberg's Cubase copy-protection
@@ -50,8 +50,3 @@ without the original hardware key.
 
 - Stripped to the essentials for a dongle emulator: no Wi-Fi, no microSD, no
   USB, no status LED.
-
-### Notes
-
-- Beta build: ships with a placeholder store icon and the development app UUID;
-  a real icon and a minted UUID land with the stable public release.
