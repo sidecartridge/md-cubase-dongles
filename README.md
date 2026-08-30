@@ -55,6 +55,9 @@ Emulated dongle:  Cubase V3
     - Cubase 3.10
     - Cubase Score 2.x
 
+For research and study only.
+Use only with Cubase software you own.
+
 [D] Change dongle
 
 [E] Enter GEM      [X] Back to Booster

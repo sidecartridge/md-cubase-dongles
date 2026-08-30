@@ -230,6 +230,9 @@ static void menu(void) {
     term_printString("\n");
   }
   term_printString("\n");
+  // Short research/ownership notice (see README "Provenance & legal").
+  term_printString("For research and study only.\n");
+  term_printString("Use only with Cubase software you own.\n\n");
   if (availableDongleCount() > 1) {
     term_printString("[D] Change dongle\n\n");
   }
