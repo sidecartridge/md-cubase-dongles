@@ -5,7 +5,8 @@
   "image": "https://raw.githubusercontent.com/sidecartridge/md-cubase-dongles/main/icon.png",
   "tags": [
     "Cubase",
-    "Dongle"
+    "Dongle",
+    "Emulation"
   ],
   "devices": [
     "ST",
